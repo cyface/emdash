@@ -85,18 +85,25 @@ function useBarLayout(
 		observer.observe(dock);
 		return () => observer.disconnect();
 	}, [dockRef, widths, contentKey]);
-	// Longer translations can need more room than the English widths allow for.
+	// Longer translations and wider fonts can need more room than the English widths allow for.
 	React.useLayoutEffect(() => {
 		if (layout === "stacked") return;
 		const card = cardRef.current;
 		const title = titleRef.current;
 		if (!card || !title) return;
-		// Both widths are rounded, so text with fractional widths can look a pixel too wide.
-		if (card.scrollWidth - card.clientWidth > 1 || title.scrollWidth - title.clientWidth > 1) {
+		// The card's widths are rounded, so content with fractional widths can look a pixel too wide.
+		if (card.scrollWidth - card.clientWidth > 1 || isTextClipped(title)) {
 			setLayout((current) => (current === layout ? LAYOUT_STEPS[layout] : current));
 		}
 	});
 	return layout;
+}
+
+/** Whether truncated text is cut short, measured without the rounding of scroll widths. */
+function isTextClipped(element: HTMLElement): boolean {
+	const text = document.createRange();
+	text.selectNodeContents(element);
+	return text.getBoundingClientRect().width > element.getBoundingClientRect().width;
 }
 
 /** The bar at the bottom of the canvas while a saved version is shown in place of the editor. */

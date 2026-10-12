@@ -71,14 +71,29 @@ function renderBar(width: number, createdAt = lastWednesdayEvening()) {
 	return render(<BarAt width={width} createdAt={createdAt} />, { wrapper: Toasty });
 }
 
-function layoutOf(screen: Awaited<ReturnType<typeof renderBar>>, exitLabel: string) {
+type BarScreen = Awaited<ReturnType<typeof renderBar>>;
+
+/** The dock width the bar starts showing the full label at, without arrows. */
+const WIDE_DOCK_PX = 36 * 16;
+
+/** The width the card takes on one row with the full label, in the fonts this browser has. */
+async function fullLabelWidth(screen: BarScreen, createdAt: string): Promise<number> {
+	await screen.rerender(<BarAt width={2000} createdAt={createdAt} />);
+	await expect.element(screen.getByRole("button", { name: "Back to editing" })).toBeVisible();
+	const card = screen.getByRole("heading", { level: 2 }).element().closest("section")!;
+	return card.getBoundingClientRect().width;
+}
+
+function layoutOf(screen: BarScreen, exitLabel: string) {
 	const title = screen.getByRole("heading", { level: 2 }).element();
 	const exit = screen.getByRole("button", { name: exitLabel, exact: true }).element();
 	const restore = screen.getByRole("button", { name: "Restore", exact: true }).element();
 	const card = title.closest("section")!;
+	const text = document.createRange();
+	text.selectNodeContents(title);
 	return {
 		oneRow: exit.getBoundingClientRect().top < title.getBoundingClientRect().bottom,
-		titleClipped: title.scrollWidth > title.clientWidth,
+		titleClipped: text.getBoundingClientRect().width > title.getBoundingClientRect().width,
 		actionsInside:
 			restore.getBoundingClientRect().right <= card.getBoundingClientRect().right + 0.5 &&
 			card.scrollWidth <= card.clientWidth,
@@ -86,8 +101,11 @@ function layoutOf(screen: Awaited<ReturnType<typeof renderBar>>, exitLabel: stri
 }
 
 describe("RevisionViewBar layout", () => {
-	it("keeps one row with the full label when there is room", async () => {
-		const screen = await renderBar(600);
+	it("keeps one row with the full label when there is just room for it", async () => {
+		const createdAt = lastWednesdayEvening();
+		const screen = await renderBar(2000, createdAt);
+		const width = Math.max(Math.ceil(await fullLabelWidth(screen, createdAt)), WIDE_DOCK_PX);
+		await screen.rerender(<BarAt width={width} createdAt={createdAt} />);
 		await expect.element(screen.getByRole("button", { name: "Back to editing" })).toBeVisible();
 		expect(layoutOf(screen, "Back to editing")).toEqual({
 			oneRow: true,
@@ -150,7 +168,11 @@ describe("RevisionViewBar layout", () => {
 	});
 
 	it("gives up the full label when a longer version label needs the room", async () => {
-		const screen = await renderBar(590, lastYearEvening());
+		const createdAt = lastYearEvening();
+		const screen = await renderBar(2000, createdAt);
+		const width = Math.ceil(await fullLabelWidth(screen, createdAt)) - 1;
+		expect(width).toBeGreaterThanOrEqual(WIDE_DOCK_PX);
+		await screen.rerender(<BarAt width={width} createdAt={createdAt} />);
 		await expect.element(screen.getByRole("button", { name: "Done", exact: true })).toBeVisible();
 		expect(layoutOf(screen, "Done")).toEqual({
 			oneRow: true,
