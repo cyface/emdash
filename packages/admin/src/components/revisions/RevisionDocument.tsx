@@ -275,6 +275,7 @@ const ImageRow = React.memo(function ImageRow({
 					"relative my-4 max-w-full whitespace-normal",
 					(alignment === "left" || alignment === "right") &&
 						"w-full min-[641px]:w-fit min-[641px]:max-w-1/2",
+					// The editor's image node floats by the stored side; a version lays out the same way.
 					alignment === "left" && "min-[641px]:[float:left] min-[641px]:me-6",
 					alignment === "right" && "min-[641px]:[float:right] min-[641px]:ms-6",
 				)}
