@@ -1075,17 +1075,22 @@ function ContentEditPage() {
 	});
 	const revisionTokensRef = React.useRef(new Map<string, string | undefined>());
 	const revisionVersionsRef = React.useRef(new Map<string, number>());
+	// The draft revision of the entry version each token names, which an autosave sent with that
+	// token replaces.
+	const tokenDraftRevisionsRef = React.useRef(new Map<string, string | null>());
 	const activeRevisionEntryRef = React.useRef("");
 	const revisionIdentity = `${collection}:${id}:${activeLocale ?? ""}`;
 	if (activeRevisionEntryRef.current !== revisionIdentity) {
 		activeRevisionEntryRef.current = revisionIdentity;
 		revisionTokensRef.current.delete(id);
 		revisionVersionsRef.current.delete(id);
+		tokenDraftRevisionsRef.current.delete(id);
 	}
 	const recordWriteRevision = React.useCallback(
-		(entryId: string, item: Pick<ContentItem, "_rev">) => {
+		(entryId: string, item: Pick<ContentItem, "_rev" | "draftRevisionId">) => {
 			if (!item._rev) return;
 			revisionTokensRef.current.set(entryId, item._rev);
+			tokenDraftRevisionsRef.current.set(entryId, item.draftRevisionId ?? null);
 			const version = decodeRevVersion(item._rev);
 			if (typeof version === "number") revisionVersionsRef.current.set(entryId, version);
 		},
@@ -1377,16 +1382,21 @@ function ContentEditPage() {
 
 	// Autosave mutation - skips revision creation
 	const autosaveMutation = useMutation({
-		// Read when the autosave starts, after any autosave queued before it has landed.
-		onMutate: ({ targetId }: AutosaveMutationInput) => ({
-			previousDraftId:
-				queryClient.getQueryData<ContentItem>([
-					"content",
-					collection,
-					targetId,
-					{ locale: activeLocale },
-				])?.draftRevisionId ?? null,
-		}),
+		// Read when the autosave starts, after any autosave queued before it has landed. The cached
+		// entry can lag behind the token while a save's read of it is still on its way.
+		onMutate: ({ targetId }: AutosaveMutationInput) => {
+			const tokenDrafts = tokenDraftRevisionsRef.current;
+			return {
+				previousDraftId: tokenDrafts.has(targetId)
+					? (tokenDrafts.get(targetId) ?? null)
+					: (queryClient.getQueryData<ContentItem>([
+							"content",
+							collection,
+							targetId,
+							{ locale: activeLocale },
+						])?.draftRevisionId ?? null),
+			};
+		},
 		mutationFn: async ({ targetId, targetLocale, changes }: AutosaveMutationInput) => {
 			const savedItem = await updateContent(
 				collection,

@@ -17,8 +17,8 @@ type Pair = readonly [number, number];
  * Pairs old blocks with new ones. Portable Text keys are a strong hint but not an identity:
  * seeded and imported content has none, and an editing session that started without keys writes
  * fresh ones on every save. So after the equal blocks at the start and end, unique keys pair
- * blocks, then equal content, then similar content, and finally identical blocks that changed
- * place pair as moved.
+ * blocks when they can be trusted, then equal content, then similar content, and finally
+ * identical blocks that changed place pair as moved.
  */
 export function alignBlocks(
 	oldBlocks: readonly NormalizedBlock[],
@@ -48,7 +48,7 @@ class BlockAligner {
 		this.oldBlocks = oldBlocks;
 		this.newBlocks = newBlocks;
 		this.context = context;
-		this.keysTrusted = keysAreTrusted(oldBlocks, newBlocks);
+		this.keysTrusted = this.keysAreTrusted();
 	}
 
 	align(): void {
@@ -68,7 +68,7 @@ class BlockAligner {
 			this.pair(oldTail, newTail);
 		}
 
-		const anchors = this.pairKeys(head, oldTail, newTail);
+		const anchors = this.keysTrusted ? this.pairKeys(head, oldTail, newTail) : [];
 		const bounds: Pair[] = [[head - 1, head - 1], ...anchors, [oldTail, newTail]];
 		for (let index = 1; index < bounds.length; index++) {
 			const [oldFrom, newFrom] = bounds[index - 1] ?? [0, 0];
@@ -182,7 +182,11 @@ class BlockAligner {
 		if (this.pairLone(oldSub, newSub)) return;
 		const rows = oldSub.length;
 		const columns = newSub.length;
-		if (rows * columns > this.context.limits.maxSimilarityCells) return;
+		const { maxSimilarityCells, maxSimilarityWords } = this.context.limits;
+		if (rows * columns > maxSimilarityCells) return;
+		const oldWords = oldSub.reduce((total, o) => total + this.wordsIn(this.oldBlocks[o]), 0);
+		const newWords = newSub.reduce((total, n) => total + this.wordsIn(this.newBlocks[n]), 0);
+		if (oldWords * columns + newWords * rows > maxSimilarityWords) return;
 
 		const scores = new Float64Array(rows * columns);
 		// best[i * (columns + 1) + j] is the highest total score pairing oldSub[i..] with newSub[j..].
@@ -243,6 +247,40 @@ class BlockAligner {
 
 	private keysTellApart(a: NormalizedBlock, b: NormalizedBlock): boolean {
 		return this.keysTrusted && a.key !== null && b.key !== null && a.key !== b.key;
+	}
+
+	/**
+	 * Whether keys identify blocks across the two revisions: at least half of the keyed blocks on
+	 * the side with fewer of them find a block of the same type with their key on the other side.
+	 * Keyless content, and a session that writes fresh keys on every save, find none. Tools that
+	 * number keys from the start on every save reuse them for other blocks, which shows when a key
+	 * pairs different blocks while one of them is still there unchanged.
+	 */
+	private keysAreTrusted(): boolean {
+		const { oldBlocks, newBlocks } = this;
+		const substantialSignatures = (blocks: readonly NormalizedBlock[]) =>
+			new Set(blocks.filter((block) => this.substantial(block)).map(blockSignature));
+		const oldSignatures = substantialSignatures(oldBlocks);
+		const newSignatures = substantialSignatures(newBlocks);
+		const oldByKey = uniqueKeys(oldBlocks);
+		let shared = 0;
+		for (const [key, n] of uniqueKeys(newBlocks)) {
+			const o = oldByKey.get(key);
+			const oldBlock = o === undefined ? undefined : oldBlocks[o];
+			const newBlock = newBlocks[n];
+			if (!oldBlock || !newBlock || oldBlock.type !== newBlock.type) continue;
+			const oldSignature = blockSignature(oldBlock);
+			const newSignature = blockSignature(newBlock);
+			if (
+				oldSignature !== newSignature &&
+				(newSignatures.has(oldSignature) || oldSignatures.has(newSignature))
+			) {
+				return false;
+			}
+			shared++;
+		}
+		const keyed = Math.min(countKeyed(oldBlocks), countKeyed(newBlocks));
+		return shared > 0 && shared * 2 >= keyed;
 	}
 
 	/** Identical blocks left unpaired on both sides, each unique among the leftovers, moved. */
@@ -308,6 +346,11 @@ class BlockAligner {
 		return 0;
 	}
 
+	/** The distinct words a similarity comparison walks for a block. */
+	private wordsIn(block: NormalizedBlock | undefined): number {
+		return block ? this.bag(block).size : 0;
+	}
+
 	private bag(block: NormalizedBlock): Map<string, number> {
 		let bag = this.bags.get(block);
 		if (!bag) {
@@ -346,25 +389,6 @@ function bagSimilarity(a: ReadonlyMap<string, number>, b: ReadonlyMap<string, nu
 	if (dice >= 0.5) return dice;
 	const smaller = Math.min(sizeA, sizeB);
 	return smaller >= 3 && common / smaller >= 0.8 ? 0.5 : 0;
-}
-
-/**
- * Whether keys identify blocks across the two revisions: at least half of the keyed blocks on the
- * side with fewer of them find a block of the same type with their key on the other side. Keyless
- * content, and a session that writes fresh keys on every save, find none.
- */
-function keysAreTrusted(
-	oldBlocks: readonly NormalizedBlock[],
-	newBlocks: readonly NormalizedBlock[],
-): boolean {
-	const oldByKey = uniqueKeys(oldBlocks);
-	let shared = 0;
-	for (const [key, n] of uniqueKeys(newBlocks)) {
-		const o = oldByKey.get(key);
-		if (o !== undefined && oldBlocks[o]?.type === newBlocks[n]?.type) shared++;
-	}
-	const keyed = Math.min(countKeyed(oldBlocks), countKeyed(newBlocks));
-	return shared > 0 && shared * 2 >= keyed;
 }
 
 function countKeyed(blocks: readonly NormalizedBlock[]): number {

@@ -630,6 +630,19 @@ describe("revision diff: blocks", () => {
 		expect(blockItems(diff)).toMatchObject([{ action: "edited", target: "b-content-2" }]);
 	});
 
+	it("doesn't pair blocks by keys numbered from the start on every save", () => {
+		const numbered = (texts: string[]) =>
+			texts.map((text, index) => block(text, { key: `k${index}` }));
+		const [a = "", b = "", c = ""] = STORY;
+		const diff = diffBody(
+			numbered([a, b, c]),
+			numbered(["A new opening paragraph for the post.", a, b, `${c} Today.`]),
+		);
+
+		expect(statuses(diff)).toEqual(["added", "unchanged", "unchanged", "changed"]);
+		expect(marked(textChangeOf(rowsOf(diff)[3]))).toBe(`${c}{+ Today.+}`);
+	});
+
 	it("doesn't pair blocks by a key that occurs twice", () => {
 		const first = block("The first paragraph stays the same.", { key: "dup" });
 		const second = block("The second paragraph stays as well.", { key: "dup" });
@@ -1049,6 +1062,19 @@ describe("revision diff: bounded work", () => {
 				row.status === "changed" && row.change.kind === "text" ? row.change.text.mode : null,
 			),
 		).toEqual(["inline", "whole"]);
+	});
+
+	it("reads a long run of edited paragraphs as edits", () => {
+		const texts = Array.from(
+			{ length: 60 },
+			(_, index) => `Section ${index} covers week ${index}.`,
+		);
+		const diff = diffBody(
+			texts.map((text) => block(text, { key: null })),
+			texts.map((text) => block(`${text} Updated.`)),
+		);
+
+		expect(statuses(diff)).toEqual(texts.map(() => "changed"));
 	});
 
 	it("still pairs equal blocks in order when a gap is too large to compare every pair", () => {

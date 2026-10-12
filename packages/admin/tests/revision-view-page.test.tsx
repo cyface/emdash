@@ -155,8 +155,12 @@ function createMockServer() {
 	const restoredEntryReleased = new Promise<void>((resolve) => {
 		releaseRestoredEntry = resolve;
 	});
-	// One-shot gates: the next list read or autosave waits until its gate is released.
-	const gates = { list: [] as Promise<void>[], autosave: [] as Promise<void>[] };
+	// One-shot gates: the next list read, entry read or save waits until its gate is released.
+	const gates = {
+		list: [] as Promise<void>[],
+		entry: [] as Promise<void>[],
+		autosave: [] as Promise<void>[],
+	};
 	function hold(kind: keyof typeof gates) {
 		let release = () => {};
 		gates[kind].push(
@@ -221,7 +225,10 @@ function createMockServer() {
 		}
 		if (method === "GET" && url.startsWith("/_emdash/api/content/posts/post_1")) {
 			if (!restored) {
-				return jsonResponse({ data: { item: makeItem(), _rev: "rev-initial" } });
+				const gate = gates.entry.shift();
+				const response = jsonResponse({ data: { item: makeItem(), _rev: "rev-initial" } });
+				await gate;
+				return response;
 			}
 			await restoredEntryReleased;
 			// Like the server, the entry read carries its draft revision's data.
@@ -259,6 +266,7 @@ function createMockServer() {
 		requests,
 		releaseRestoredEntry,
 		holdNextListRead: () => hold("list"),
+		holdNextEntryRead: () => hold("entry"),
 		holdNextAutosave: () => hold("autosave"),
 		restore() {
 			globalThis.fetch = originalFetch;
@@ -451,6 +459,29 @@ describe("ContentEditPage revision view", () => {
 		const list = cachedList(screen.queryClient)!;
 		expect(list.items.map((item) => item.id)).toEqual(["revision-autosaved-2", "revision-old"]);
 		expect(list.total).toBe(2);
+	});
+
+	it("replaces the draft a save just wrote while the entry is still being read again", async () => {
+		server = createMockServer();
+		const screen = await renderEditPage();
+		await vi.waitFor(() => expect(listReads()).toHaveLength(1));
+		const title = screen.getByRole("textbox", { name: "Title", exact: true });
+		const releaseEntryRead = server.holdNextEntryRead();
+		await title.fill("Saved by hand");
+		await screen.getByRole("button", { name: "Save" }).click();
+		await vi.waitFor(() =>
+			expect(cachedList(screen.queryClient)?.items[0]?.id).toBe("revision-autosaved-1"),
+		);
+
+		await title.fill("Typed after saving");
+		await vi.waitFor(
+			() => expect(cachedList(screen.queryClient)?.items[0]?.id).toBe("revision-autosaved-2"),
+			{ timeout: 5000 },
+		);
+		const list = cachedList(screen.queryClient)!;
+		expect(list.items.map((item) => item.id)).toEqual(["revision-autosaved-2", "revision-old"]);
+		expect(list.total).toBe(2);
+		releaseEntryRead();
 	});
 
 	it("reads the list again when an autosave lands during its first read", async () => {

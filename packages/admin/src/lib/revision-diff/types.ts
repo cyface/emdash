@@ -23,6 +23,8 @@ export interface DiffLimits {
 	maxBlockLcsCells: number;
 	/** Cells for similarity pairing inside one sub-gap. */
 	maxSimilarityCells: number;
+	/** Words similarity pairing may compare inside one sub-gap: each cell walks both blocks' words. */
+	maxSimilarityWords: number;
 }
 
 export interface DiffOptions {

@@ -4,7 +4,8 @@ export const DEFAULT_LIMITS: DiffLimits = {
 	maxTokenCellsPerText: 1_000_000,
 	maxTokenCellsTotal: 5_000_000,
 	maxBlockLcsCells: 250_000,
-	maxSimilarityCells: 2_500,
+	maxSimilarityCells: 40_000,
+	maxSimilarityWords: 8_000_000,
 };
 
 /** State shared by everything one revision diff computes. */
