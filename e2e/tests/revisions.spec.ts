@@ -9,8 +9,7 @@ import { test, expect, type AdminPage } from "../fixtures";
 
 const REVISIONS_TRIGGER = /^Revisions/;
 const VERSION_VIEW = /^Version from /;
-const BACK_TO_EDITING = /^(Back to editing|Done)$/;
-const CURRENT_ROW = /, Current version, Dev Admin$/;
+const RESTORED_CURRENT_ROW = /, Current version, Dev Admin, Restored from \u2068?.+\u2069?$/u;
 const PUBLISHED_ROW = /, Published, Dev Admin$/;
 const INSERTED_RED = /(?:^|\s)red$/;
 const REMOVED_BROWN = /(?:^|\s)brown$/;
@@ -49,7 +48,7 @@ function versionView(page: Page): Locator {
 function versionBar(page: Page): Locator {
 	return page
 		.getByRole("region")
-		.filter({ has: page.getByRole("button", { name: BACK_TO_EDITING }) });
+		.filter({ has: page.getByRole("button", { name: "Back to editing" }) });
 }
 
 function changeList(page: Page): Locator {
@@ -215,7 +214,7 @@ test.describe("Revisions", () => {
 		await expect(canvas).toBeVisible();
 		await expect(titleInput).toBeHidden();
 
-		await versionBar(page).getByRole("button", { name: BACK_TO_EDITING }).click();
+		await versionBar(page).getByRole("button", { name: "Back to editing" }).click();
 		await expect(canvas).toHaveCount(0);
 		await expect(titleInput).toBeVisible();
 		await expect(titleInput).toHaveValue("Unsaved title edit");
@@ -241,15 +240,19 @@ test.describe("Revisions", () => {
 		await expect(bodyEditor).not.toContainText("grey");
 
 		await expect(rows).toHaveCount(4);
-		await expect(rows.nth(0)).toHaveAccessibleName(CURRENT_ROW);
+		await expect(rows.nth(0)).toHaveAccessibleName(RESTORED_CURRENT_ROW);
+		await expect(rows.nth(0)).toBeFocused();
 		await expect(rows.nth(2)).toHaveAccessibleName(PUBLISHED_ROW);
 
 		await rows.nth(0).click();
 		await expect(canvas).toBeVisible();
 		await expect(changeList(page).getByRole("listitem").first()).toHaveText(RESTORED_FROM);
-		await expect(
-			versionBar(page).getByRole("button", { name: "Restore", exact: true }),
-		).toHaveCount(0);
+		const restore = versionBar(page).getByRole("button", { name: "Restore", exact: true });
+		await expect(restore).toHaveCount(0);
+
+		await rows.nth(2).click();
+		await expect(versionBar(page)).toContainText("Same as current version");
+		await expect(restore).toHaveCount(0);
 	});
 
 	test("on a phone, versions open from the settings sheet and step with arrows", async ({
@@ -284,7 +287,7 @@ test.describe("Revisions", () => {
 		await expect(bar).not.toContainText("Current version");
 		await expect(newer).toBeEnabled();
 
-		await bar.getByRole("button", { name: "Done" }).click();
+		await bar.getByRole("button", { name: "Back to editing" }).click();
 		await expect(canvas).toHaveCount(0);
 		await expect(page.locator("#field-title")).toBeVisible();
 	});

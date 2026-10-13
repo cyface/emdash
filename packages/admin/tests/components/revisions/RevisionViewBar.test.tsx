@@ -1,7 +1,7 @@
 import { Toasty } from "@cloudflare/kumo";
-import { i18n } from "@lingui/core";
 import * as React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { userEvent } from "vitest/browser";
 
 import "../../../dist/styles.css";
 import { RevisionViewBar } from "../../../src/components/revisions/RevisionViewBar";
@@ -14,12 +14,39 @@ function lastWednesdayEvening(): string {
 	return new Date(2026, 9, 14, 22, 2).toISOString();
 }
 
-/** A date in an earlier year, which the bar spells out in full. */
-function lastYearEvening(): string {
-	return new Date(2025, 8, 30, 22, 2).toISOString();
+function thisMorning(): string {
+	return new Date(2026, 9, 17, 9, 12).toISOString();
 }
 
-function BarAt({ width, createdAt }: { width: number; createdAt: string }) {
+function overlaps(a: DOMRect, b: DOMRect): boolean {
+	return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+}
+
+function BarAt({
+	width,
+	createdAt,
+	statuses = false,
+	published = statuses,
+	stepper = statuses,
+	current = false,
+	firstVersion = false,
+	author = "Maya Chen",
+	onExit = vi.fn(),
+}: {
+	width: number;
+	createdAt: string;
+	/** Shows the version as published and the same as the current one, on a phone with arrows. */
+	statuses?: boolean;
+	published?: boolean;
+	/** Adds the arrows and Show changes, as when the Revisions list is off screen. */
+	stepper?: boolean;
+	/** The current version, which has nothing to restore. */
+	current?: boolean;
+	/** The first version, which has nothing to compare with. */
+	firstVersion?: boolean;
+	author?: string;
+	onExit?: () => void;
+}) {
 	const titleRef = React.useRef<HTMLHeadingElement>(null);
 	const dockRef = React.useRef<HTMLDivElement>(null);
 	return (
@@ -33,17 +60,20 @@ function BarAt({ width, createdAt }: { width: number; createdAt: string }) {
 					entryId: "post_1",
 					data: {},
 					authorId: "user-maya",
-					author: { id: "user-maya", name: "Maya Chen" },
+					author: { id: "user-maya", name: author },
 					createdAt,
 				}}
 				authorColor="blue"
-				isCurrent={false}
-				isPublished={false}
-				canShowChanges
+				isCurrent={current}
+				isPublished={published}
+				sameAsCurrent={statuses}
+				hasDraft
+				scheduled={false}
+				canShowChanges={!firstVersion}
 				showChanges
 				onShowChangesChange={vi.fn()}
-				onExit={vi.fn()}
-				showStepper={false}
+				onExit={onExit}
+				showStepper={stepper}
 				hasOlder
 				hasNewer
 				onStep={vi.fn()}
@@ -61,40 +91,11 @@ function BarAt({ width, createdAt }: { width: number; createdAt: string }) {
 	);
 }
 
-function renderBar(width: number, createdAt = lastWednesdayEvening()) {
-	return render(<BarAt width={width} createdAt={createdAt} />, { wrapper: Toasty });
+function renderBar(element: React.ReactElement) {
+	return render(element, { wrapper: Toasty });
 }
 
-type BarScreen = Awaited<ReturnType<typeof renderBar>>;
-
-/** The dock width the bar starts showing the full label at, without arrows. */
-const WIDE_DOCK_PX = 36 * 16;
-
-/** The width the card takes on one row with the full label, in the fonts this browser has. */
-async function fullLabelWidth(screen: BarScreen, createdAt: string): Promise<number> {
-	await screen.rerender(<BarAt width={2000} createdAt={createdAt} />);
-	await expect.element(screen.getByRole("button", { name: "Back to editing" })).toBeVisible();
-	const card = screen.getByRole("heading", { level: 2 }).element().closest("section")!;
-	return card.getBoundingClientRect().width;
-}
-
-function layoutOf(screen: BarScreen, exitLabel: string) {
-	const title = screen.getByRole("heading", { level: 2 }).element();
-	const exit = screen.getByRole("button", { name: exitLabel, exact: true }).element();
-	const restore = screen.getByRole("button", { name: "Restore", exact: true }).element();
-	const card = title.closest("section")!;
-	const text = document.createRange();
-	text.selectNodeContents(title);
-	return {
-		oneRow: exit.getBoundingClientRect().top < title.getBoundingClientRect().bottom,
-		titleClipped: text.getBoundingClientRect().width > title.getBoundingClientRect().width,
-		actionsInside:
-			restore.getBoundingClientRect().right <= card.getBoundingClientRect().right + 0.5 &&
-			card.scrollWidth <= card.clientWidth,
-	};
-}
-
-describe("RevisionViewBar layout", () => {
+describe("RevisionViewBar", () => {
 	beforeEach(() => {
 		vi.setSystemTime(NOW);
 	});
@@ -103,83 +104,118 @@ describe("RevisionViewBar layout", () => {
 		vi.useRealTimers();
 	});
 
-	it("keeps one row with the full label when there is just room for it", async () => {
-		const createdAt = lastWednesdayEvening();
-		const screen = await renderBar(2000, createdAt);
-		const width = Math.max(Math.ceil(await fullLabelWidth(screen, createdAt)), WIDE_DOCK_PX);
-		await screen.rerender(<BarAt width={width} createdAt={createdAt} />);
-		await expect.element(screen.getByRole("button", { name: "Back to editing" })).toBeVisible();
-		expect(layoutOf(screen, "Back to editing")).toEqual({
-			oneRow: true,
-			titleClipped: false,
-			actionsInside: true,
-		});
+	it("goes back to editing on the Esc its button's tooltip advertises", async () => {
+		const onExit = vi.fn();
+		const screen = await renderBar(
+			<BarAt width={2000} createdAt={lastWednesdayEvening()} onExit={onExit} />,
+		);
+		screen.getByRole("heading", { level: 2 }).element().focus();
+		await userEvent.keyboard("{Tab}");
+		await expect.element(screen.getByRole("button", { name: "Back to editing" })).toHaveFocus();
+		await expect.element(screen.getByText("Back to editing (Esc)")).toBeVisible();
+
+		await userEvent.keyboard("{Escape}");
+		expect(onExit).toHaveBeenCalledOnce();
 	});
 
-	it("stays on one row with the short label at a laptop width with the sidebar open", async () => {
-		const screen = await renderBar(546);
-		await expect.element(screen.getByRole("button", { name: "Done", exact: true })).toBeVisible();
-		expect(screen.getByRole("button", { name: "Back to editing" }).query()).toBeNull();
-		expect(layoutOf(screen, "Done")).toEqual({
-			oneRow: true,
-			titleClipped: false,
-			actionsInside: true,
-		});
+	it("puts Show changes and Restore on their own row under the version", async () => {
+		const screen = await renderBar(<BarAt width={2000} createdAt={lastWednesdayEvening()} />);
+		const restore = screen.getByRole("button", { name: "Restore", exact: true });
+		await expect.element(restore).toBeVisible();
+		const title = screen.getByRole("heading", { level: 2 }).element().getBoundingClientRect();
+		const toggle = screen.getByRole("switch", { name: "Show changes" }).element();
+		expect(restore.element().getBoundingClientRect().top).toBeGreaterThan(title.bottom);
+		expect(toggle.getBoundingClientRect().top).toBeGreaterThan(title.bottom);
 	});
 
-	it("stacks the actions under the version when one row can't hold them", async () => {
-		const screen = await renderBar(420);
-		await expect.element(screen.getByRole("button", { name: "Done", exact: true })).toBeVisible();
-		expect(layoutOf(screen, "Done")).toEqual({
-			oneRow: false,
-			titleClipped: false,
-			actionsInside: true,
-		});
+	it("keeps the version on one line when the bar has room", async () => {
+		const screen = await renderBar(
+			<BarAt width={2000} createdAt={lastWednesdayEvening()} published />,
+		);
+		const title = screen.getByRole("heading", { level: 2 });
+		await expect.element(title).toBeVisible();
+		const status = screen.getByText("Published", { exact: true }).element().getBoundingClientRect();
+		expect(status.top).toBeLessThan(title.element().getBoundingClientRect().bottom);
 	});
 
-	it("settles on stacking when even the short label can't fit a longer version label", async () => {
-		const screen = await renderBar(520, lastYearEvening());
-		await expect.element(screen.getByRole("button", { name: "Done", exact: true })).toBeVisible();
-		const layouts = new Set<boolean>();
-		for (let frame = 0; frame < 10; frame++) {
-			await new Promise((resolve) => requestAnimationFrame(resolve));
-			layouts.add(layoutOf(screen, "Done").oneRow);
+	it("shows the whole version line, and why there's nothing to restore in Restore's place", async () => {
+		const screen = await renderBar(
+			<BarAt width={2000} createdAt={lastWednesdayEvening()} statuses stepper={false} />,
+		);
+		const reason = screen.getByText("Same as current version");
+		await expect.element(reason).toBeVisible();
+		const title = screen.getByRole("heading", { level: 2 }).element();
+		expect(reason.element().getBoundingClientRect().top).toBeGreaterThan(
+			title.getBoundingClientRect().bottom,
+		);
+		const texts = [title, screen.getByText("Maya Chen").element(), reason.element()];
+		for (const text of texts) expect(text.scrollWidth).toBeLessThanOrEqual(text.clientWidth);
+	});
+
+	it("keeps a long author name and the statuses inside the bar on a 320px phone", async () => {
+		const screen = await renderBar(
+			<BarAt
+				width={288}
+				createdAt={lastWednesdayEvening()}
+				statuses
+				author="Christopher Montgomery-Smith of the Editorial Team"
+			/>,
+		);
+		const status = screen.getByText("Same as current version");
+		await expect.element(status).toBeVisible();
+		const card = status.element().closest("section")!;
+		const name = screen.getByText("Christopher Montgomery-Smith", { exact: false }).element();
+		expect(card.scrollWidth).toBeLessThanOrEqual(card.clientWidth);
+		const controls = [
+			...screen.getByRole("button").elements(),
+			screen.getByRole("switch", { name: "Show changes" }).element(),
+		];
+		for (const text of [status, screen.getByText("Published", { exact: true })]) {
+			const box = text.element().getBoundingClientRect();
+			for (const control of controls) {
+				expect(overlaps(box, control.getBoundingClientRect())).toBe(false);
+			}
 		}
-		expect([...layouts]).toEqual([false]);
-		expect(layoutOf(screen, "Done")).toEqual({
-			oneRow: false,
-			titleClipped: false,
-			actionsInside: true,
-		});
+		expect(name.scrollWidth).toBeGreaterThan(name.clientWidth);
 	});
 
-	it("keeps the full label in Arabic, where the card rounds a pixel wider than its box", async () => {
-		const previousLocale = i18n.locale;
-		i18n.load("ar", {});
-		i18n.activate("ar");
-		document.documentElement.dir = "rtl";
-		try {
-			const screen = await renderBar(800);
-			const card = screen.getByRole("heading", { level: 2 }).element().closest("section")!;
-			expect(card.scrollWidth - card.clientWidth).toBe(1);
-			await expect.element(screen.getByRole("button", { name: "Back to editing" })).toBeVisible();
-		} finally {
-			document.documentElement.dir = "ltr";
-			i18n.activate(previousLocale);
-		}
+	it("keeps its size whether or not there is something to restore or compare", async () => {
+		const screen = await renderBar(
+			<>
+				<BarAt width={2000} createdAt={lastWednesdayEvening()} />
+				<BarAt width={2000} createdAt={lastWednesdayEvening()} current />
+				<BarAt width={2000} createdAt={lastWednesdayEvening()} firstVersion />
+			</>,
+		);
+		const switches = screen.getByRole("switch", { name: "Show changes" });
+		await expect.element(switches.nth(2)).toBeDisabled();
+		expect(screen.getByRole("button", { name: "Restore", exact: true }).elements()).toHaveLength(2);
+		const heights = Array.from(
+			screen.container.querySelectorAll("section"),
+			(bar) => bar.getBoundingClientRect().height,
+		);
+		expect(heights).toEqual([heights[0], heights[0], heights[0]]);
 	});
 
-	it("gives up the full label when a longer version label needs the room", async () => {
-		const createdAt = lastYearEvening();
-		const screen = await renderBar(2000, createdAt);
-		const width = Math.ceil(await fullLabelWidth(screen, createdAt)) - 1;
-		expect(width).toBeGreaterThanOrEqual(WIDE_DOCK_PX);
-		await screen.rerender(<BarAt width={width} createdAt={createdAt} />);
-		await expect.element(screen.getByRole("button", { name: "Done", exact: true })).toBeVisible();
-		expect(layoutOf(screen, "Done")).toEqual({
-			oneRow: true,
-			titleClipped: false,
-			actionsInside: true,
+	it("keeps its height and its arrows in place on a phone, whatever the version says", async () => {
+		const screen = await renderBar(
+			<>
+				<BarAt width={343} createdAt={thisMorning()} stepper />
+				<BarAt width={343} createdAt={lastWednesdayEvening()} statuses />
+			</>,
+		);
+		await expect.element(screen.getByText("Same as current version")).toBeVisible();
+		const bars = [...screen.container.querySelectorAll("section")];
+		const olderArrows = screen.getByRole("button", { name: "Older version" }).elements();
+		const layout = bars.map((bar, index) => {
+			const box = bar.getBoundingClientRect();
+			const older = olderArrows[index]!.getBoundingClientRect();
+			return {
+				height: box.height,
+				arrowTop: older.top - box.top,
+				arrowEnd: box.right - older.right,
+			};
 		});
+		expect(layout[1]).toEqual(layout[0]);
 	});
 });

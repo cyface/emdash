@@ -15,6 +15,10 @@ export interface RevisionRestoreDialogProps {
 	collection: string;
 	entryId: string;
 	revision: RevisionListItem;
+	/** The entry has a draft, which the restored version replaces. */
+	hasDraft: boolean;
+	/** The entry is scheduled, so the restored version publishes on its own at that time. */
+	scheduled: boolean;
 	/** The editor holds edits that restoring would replace. */
 	isDirty: boolean;
 	/** The server restored the version and the editor is loading it. */
@@ -33,6 +37,8 @@ export function RevisionRestoreDialog({
 	collection,
 	entryId,
 	revision,
+	hasDraft,
+	scheduled,
 	isDirty,
 	restorePending,
 	onRestoreStart,
@@ -72,7 +78,9 @@ export function RevisionRestoreDialog({
 			onClose();
 			toastManager.add({
 				title: t`Version restored`,
-				description: t`The version from ${when} is now your draft. Publish when you're ready.`,
+				description: scheduled
+					? t`The version from ${when} is now your draft. It goes live at the scheduled time.`
+					: t`The version from ${when} is now your draft. Publish when you're ready.`,
 				type: "success",
 			});
 		},
@@ -100,9 +108,23 @@ export function RevisionRestoreDialog({
 			variant="primary"
 			title={t`Restore this version?`}
 			description={
-				isDirty
-					? t`The version from ${when} becomes your draft. Nothing changes on the live site until you publish, and the current version stays in the list. Your unsaved changes will be lost.`
-					: t`The version from ${when} becomes your draft. Nothing changes on the live site until you publish, and the current version stays in the list.`
+				<>
+					{hasDraft
+						? scheduled
+							? t`Your draft will be replaced with the version from ${when}. Your current draft stays in Revisions, and the restored version goes live at the scheduled time.`
+							: t`Your draft will be replaced with the version from ${when}. Your current draft stays in Revisions, and the live site won't change until you publish.`
+						: scheduled
+							? t`The version from ${when} becomes your draft and goes live at the scheduled time.`
+							: t`The version from ${when} becomes your draft. The live site won't change until you publish.`}
+					{isDirty && (
+						<>
+							{" "}
+							<span className="mt-2 block font-medium text-kumo-default">
+								{t`Your unsaved changes will be lost.`}
+							</span>
+						</>
+					)}
+				</>
 			}
 			confirmLabel={t`Restore`}
 			pendingLabel={t`Restoring…`}

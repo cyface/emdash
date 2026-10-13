@@ -1,11 +1,13 @@
 import { Button } from "@cloudflare/kumo";
 import { plural } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
+import { ArrowCounterClockwise } from "@phosphor-icons/react";
 import * as React from "react";
 
 import type { RevisionListItem, RevisionListResponse } from "../../lib/api";
+import { restoredSources } from "../../lib/revision-diff/index.js";
 import type { ChangeItem } from "../../lib/revision-diff/types.js";
-import { cn } from "../../lib/utils.js";
+import { cn, isolate } from "../../lib/utils.js";
 import { changeLabel } from "./change-labels.js";
 import {
 	localDayKey,
@@ -21,6 +23,24 @@ import { useRevisionViewContext, type RevisionViewContextValue } from "./revisio
 const VISIBLE_CHANGES = 5;
 
 const ROW_CLASS = "grid w-full gap-0.5 rounded-lg px-2.5 py-2 text-start";
+
+const SCROLLING_OVERFLOW_REGEX = /auto|scroll|overlay/;
+
+/** The nearest element around `element` that scrolls vertically. */
+function scrollContainer(element: HTMLElement): HTMLElement | null {
+	for (let node = element.parentElement; node; node = node.parentElement) {
+		if (SCROLLING_OVERFLOW_REGEX.test(getComputedStyle(node).overflowY)) return node;
+	}
+	return null;
+}
+
+function rowElement(root: HTMLElement | null, revisionId: string): HTMLElement | null {
+	return (
+		root?.querySelector<HTMLElement>(
+			`[data-revision-row][data-revision-id="${CSS.escape(revisionId)}"]`,
+		) ?? null
+	);
+}
 
 interface DayGroup {
 	key: string;
@@ -44,9 +64,19 @@ export function RevisionList({ list, loadingOlder }: RevisionListProps) {
 	const headingIdPrefix = React.useId();
 	const rootRef = React.useRef<HTMLDivElement>(null);
 	const focusRowAfterLoad = React.useRef<number | null>(null);
+	const pickedRowRef = React.useRef<{ revisionId: string; top: number } | null>(null);
 
 	const visibleCount = visibleRevisionCount(list);
 	const colors = React.useMemo(() => revisionAuthorColors(list.items), [list.items]);
+	const fields = view?.fields;
+	const sources = React.useMemo(
+		() => (fields ? restoredSources(list.items, fields) : new Map<string, string>()),
+		[list.items, fields],
+	);
+	const savedWhen = (revisionId: string) => {
+		const revision = list.items.find((item) => item.id === revisionId);
+		return revision ? format.when(revisionDate(revision.createdAt)) : null;
+	};
 
 	const groups: DayGroup[] = [];
 	const dayCounts = new Map<string, number>();
@@ -76,6 +106,34 @@ export function RevisionList({ list, loadingOlder }: RevisionListProps) {
 		(rows[index] ?? rows.at(-1))?.focus();
 	}, [loadingOlder, visibleCount]);
 
+	// The changes listed under the version picked before close as the new one opens. When they
+	// sat above it, the picked row would move up under the pointer, so the list scrolls to hold it.
+	const viewingId = view?.viewingId ?? null;
+	React.useLayoutEffect(() => {
+		const picked = pickedRowRef.current;
+		pickedRowRef.current = null;
+		if (!picked || picked.revisionId !== viewingId) return;
+		const row = rowElement(rootRef.current, picked.revisionId);
+		const scroller = row && scrollContainer(row);
+		if (!row || !scroller) return;
+		scroller.scrollTop += row.getBoundingClientRect().top - picked.top;
+	}, [viewingId]);
+
+	const rowToFocus = view?.rowToFocus ?? null;
+	const clearRowToFocus = view?.clearRowToFocus;
+	React.useEffect(() => {
+		if (!rowToFocus) return;
+		const row = rowElement(rootRef.current, rowToFocus.revisionId);
+		if (!row) return;
+		// The restore dialog hands focus back as it closes, after this commit.
+		const frame = requestAnimationFrame(() => {
+			clearRowToFocus?.();
+			const active = document.activeElement;
+			if (!active || active === document.body || active === rowToFocus.opener) row.focus();
+		});
+		return () => cancelAnimationFrame(frame);
+	}, [rowToFocus, clearRowToFocus, list.items]);
+
 	const canShowOlder =
 		view !== null &&
 		list.total > visibleCount &&
@@ -98,9 +156,16 @@ export function RevisionList({ list, loadingOlder }: RevisionListProps) {
 								<VersionRow
 									key={item.id}
 									item={item}
-									list={list}
 									view={view}
 									color={revisionAuthorColor(colors, item)}
+									restoredFrom={sources.get(item.id) ?? null}
+									savedWhen={savedWhen}
+									onPick={(row) => {
+										pickedRowRef.current = {
+											revisionId: item.id,
+											top: row.getBoundingClientRect().top,
+										};
+									}}
 								/>
 							))}
 						</ul>
@@ -128,12 +193,17 @@ export function RevisionList({ list, loadingOlder }: RevisionListProps) {
 
 interface VersionRowProps {
 	item: RevisionListItem;
-	list: RevisionListResponse;
 	view: RevisionViewContextValue | null;
 	color: AuthorColor;
+	/** The version this one copies, when it is a restored copy. */
+	restoredFrom: string | null;
+	/** When a listed version was saved, or null when it isn't loaded. */
+	savedWhen: (revisionId: string) => string | null;
+	/** Runs before the row's version opens. */
+	onPick: (row: HTMLElement) => void;
 }
 
-function VersionRow({ item, list, view, color }: VersionRowProps) {
+function VersionRow({ item, view, color, restoredFrom, savedWhen, onPick }: VersionRowProps) {
 	const { t } = useLingui();
 	const format = useRevisionFormat();
 	const date = revisionDate(item.createdAt);
@@ -151,10 +221,13 @@ function VersionRow({ item, list, view, color }: VersionRowProps) {
 				: isPublished
 					? t`${when}, Published, ${author}`
 					: t`${when}, ${author}`;
+	const restoredWhen = restoredFrom ? savedWhen(restoredFrom) : null;
+	const restoredDate = restoredWhen ? isolate(restoredWhen) : null;
+	const restored = restoredDate ? t`Restored from ${restoredDate}` : null;
 
 	const content = (
 		<>
-			<span className="sr-only">{label}</span>
+			<span className="sr-only">{restored ? t`${label}, ${restored}` : label}</span>
 			<span aria-hidden="true" className="flex min-w-0 items-baseline gap-2">
 				<time dateTime={date.toISOString()} className="shrink-0 text-base font-medium tabular-nums">
 					<bdi>{format.time(date)}</bdi>
@@ -177,6 +250,15 @@ function VersionRow({ item, list, view, color }: VersionRowProps) {
 				/>
 				<bdi className="truncate">{author}</bdi>
 			</span>
+			{restored && (
+				<span
+					aria-hidden="true"
+					className="flex min-w-0 items-center gap-1 text-xs leading-4 text-kumo-subtle"
+				>
+					<ArrowCounterClockwise className="size-3 shrink-0" />
+					<span className="truncate">{restored}</span>
+				</span>
+			)}
 		</>
 	);
 
@@ -186,9 +268,12 @@ function VersionRow({ item, list, view, color }: VersionRowProps) {
 				<button
 					type="button"
 					data-revision-row=""
+					data-revision-id={item.id}
 					aria-current={isSelected || undefined}
 					onClick={(event) => {
-						if (!isSelected) view.view(item.id, { opener: event.currentTarget });
+						if (isSelected) return;
+						onPick(event.currentTarget);
+						view.view(item.id, { opener: event.currentTarget });
 					}}
 					className={cn(
 						ROW_CLASS,
@@ -202,7 +287,11 @@ function VersionRow({ item, list, view, color }: VersionRowProps) {
 				<div className={ROW_CLASS}>{content}</div>
 			)}
 			{view && isSelected && view.viewingDiff && view.viewingDiff.changes.length > 0 && (
-				<ChangeList changes={view.viewingDiff.changes} list={list} goToChange={view.goToChange} />
+				<ChangeList
+					changes={view.viewingDiff.changes}
+					savedWhen={savedWhen}
+					goToChange={view.goToChange}
+				/>
 			)}
 		</li>
 	);
@@ -210,13 +299,12 @@ function VersionRow({ item, list, view, color }: VersionRowProps) {
 
 interface ChangeListProps {
 	changes: readonly ChangeItem[];
-	list: RevisionListResponse;
+	savedWhen: (revisionId: string) => string | null;
 	goToChange: (targetId: string) => void;
 }
 
-function ChangeList({ changes, list, goToChange }: ChangeListProps) {
+function ChangeList({ changes, savedWhen, goToChange }: ChangeListProps) {
 	const { t, i18n } = useLingui();
-	const format = useRevisionFormat();
 	const [showAll, setShowAll] = React.useState(false);
 	const firstRevealed = React.useRef<HTMLElement | null>(null);
 	const focusRevealed = React.useRef(false);
@@ -227,10 +315,6 @@ function ChangeList({ changes, list, goToChange }: ChangeListProps) {
 		firstRevealed.current?.focus();
 	}, [showAll]);
 
-	const restoredWhen = (revisionId: string) => {
-		const source = list.items.find((item) => item.id === revisionId);
-		return source ? format.when(revisionDate(source.createdAt)) : null;
-	};
 	const shown = showAll ? changes : changes.slice(0, VISIBLE_CHANGES);
 	const hiddenCount = changes.length - shown.length;
 
@@ -240,7 +324,7 @@ function ChangeList({ changes, list, goToChange }: ChangeListProps) {
 			className="mb-2 ms-3.5 me-2 grid grid-cols-1 border-s-[1.5px] border-kumo-line ps-1.5"
 		>
 			{shown.map((change, index) => {
-				const text = changeLabel(i18n, change, { restoredWhen });
+				const text = changeLabel(i18n, change, { restoredWhen: savedWhen });
 				const ref =
 					index === VISIBLE_CHANGES
 						? (element: HTMLElement | null) => {

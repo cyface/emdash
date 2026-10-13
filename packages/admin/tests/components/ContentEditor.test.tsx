@@ -126,6 +126,7 @@ function MockRevisionHistory() {
 				</button>
 			)}
 			{view && <output aria-label="Versions requested">{view.listLimit}</output>}
+			{view && <output aria-label="Version to focus">{view.rowToFocus?.revisionId}</output>}
 		</div>
 	);
 }
@@ -134,14 +135,20 @@ vi.mock("../../src/components/RevisionHistory", () => ({
 	RevisionHistory: () => <MockRevisionHistory />,
 }));
 
+/** A version label the stand-in canvas fails to draw. */
+let unreadableVersion: RegExp | null = null;
+
 vi.mock("../../src/components/revisions/RevisionViewCanvas", () => ({
-	RevisionViewCanvas: ({ label, showChanges }: { label: string; showChanges: boolean }) => (
-		<article aria-label={label} data-show-changes={String(showChanges)}>
-			<p id="revision-t1" tabIndex={-1}>
-				Changed paragraph
-			</p>
-		</article>
-	),
+	RevisionViewCanvas: ({ label, showChanges }: { label: string; showChanges: boolean }) => {
+		if (unreadableVersion?.test(label)) throw new Error("The version can't be drawn.");
+		return (
+			<article aria-label={label} data-show-changes={String(showChanges)}>
+				<p id="revision-t1" tabIndex={-1}>
+					Changed paragraph
+				</p>
+			</article>
+		);
+	},
 }));
 
 vi.mock("../../src/lib/revision-diff/index.js", async (importOriginal) => ({
@@ -3707,6 +3714,37 @@ describe("ContentEditor revision view", () => {
 		expect(portableTextMountCount).toBe(1);
 	});
 
+	it("switches versions without drawing the canvas again, so its images don't reload", async () => {
+		const screen = await renderRevisionEditor();
+		await screen.getByRole("button", { name: "View rev-old" }).click();
+		const canvas = screen.getByRole("article", { name: /^Version from/ });
+		await expect.element(canvas).toBeVisible();
+		const shown = canvas.element();
+
+		await screen.getByRole("button", { name: "View rev-draft" }).click();
+		await expect.element(screen.getByText("Current version", { exact: true })).toBeVisible();
+		expect(canvas.element()).toBe(shown);
+	});
+
+	it("shows the next version after one that can't be shown", async () => {
+		const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+		unreadableVersion = /October 1/;
+		try {
+			const screen = await renderRevisionEditor();
+			await screen.getByRole("button", { name: "View rev-old" }).click();
+			await expect.element(screen.getByText("This version can't be shown.")).toBeVisible();
+
+			await screen.getByRole("button", { name: "View rev-draft" }).click();
+			await expect.element(screen.getByRole("article", { name: /^Version from/ })).toBeVisible();
+			await expect
+				.element(screen.getByText("This version can't be shown."))
+				.not.toBeInTheDocument();
+		} finally {
+			unreadableVersion = null;
+			consoleError.mockRestore();
+		}
+	});
+
 	it("sends a pending autosave before showing a version and holds autosave while it is shown", async () => {
 		vi.useFakeTimers();
 		try {
@@ -3821,6 +3859,48 @@ describe("ContentEditor revision view", () => {
 		await expect
 			.element(screen.getByTestId("portable-text-editor"))
 			.toHaveAttribute("data-content", "Old body");
+		await expect
+			.element(screen.getByRole("status", { name: "Version to focus" }))
+			.toHaveTextContent("rev-restored");
+	});
+
+	it.each([
+		["with a draft", makeRevisionItem(), "Your draft will be replaced with the version from"],
+		[
+			"without a draft",
+			makeRevisionItem({ draftRevisionId: null, liveRevisionId: "rev-draft" }),
+			"becomes your draft. The live site won't change until you publish.",
+		],
+		[
+			"that is scheduled",
+			makeRevisionItem({ scheduledAt: "2026-10-20T09:00:00.000Z" }),
+			"the restored version goes live at the scheduled time.",
+		],
+	])("says what restoring does to an entry %s", async (_, item, description) => {
+		const screen = await renderRevisionEditor({ item });
+		await screen.getByRole("button", { name: "View rev-old" }).click();
+		await screen.getByRole("button", { name: "Restore", exact: true }).click();
+
+		await expect
+			.element(
+				screen
+					.getByRole("dialog", { name: "Restore this version?" })
+					.getByText(description, { exact: false }),
+			)
+			.toBeVisible();
+	});
+
+	it("offers nothing to restore for a version that matches the current one", async () => {
+		vi.mocked(fetchRevisions).mockImplementation(async () => {
+			const list = makeRevisionList();
+			const current = list.items[0]!;
+			return { ...list, items: list.items.map((item) => ({ ...item, data: { ...current.data } })) };
+		});
+		const screen = await renderRevisionEditor();
+		await screen.getByRole("button", { name: "View rev-old" }).click();
+
+		await expect.element(screen.getByText("Same as current version")).toBeVisible();
+		expect(screen.getByRole("button", { name: "Restore", exact: true }).query()).toBeNull();
 	});
 
 	it("replaces unsaved edits when a host reloads the restored entry without a reset", async () => {
@@ -3942,7 +4022,7 @@ describe("ContentEditor revision view", () => {
 			await expect
 				.element(screen.getByRole("button", { name: "Restore", exact: true }))
 				.toBeVisible();
-			await expect.element(screen.getByRole("button", { name: "Done", exact: true })).toBeVisible();
+			await expect.element(screen.getByRole("button", { name: "Back to editing" })).toBeVisible();
 		} finally {
 			media.restore();
 			await page.viewport(1280, 800);

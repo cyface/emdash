@@ -30,12 +30,20 @@ export function fingerprint(data: RevisionData, fields: Fields): string {
 	return value;
 }
 
-/** Whether the slug and staged references agree wherever both revisions record them. */
-function compatibleInternals(a: RevisionData, b: RevisionData, fields: Fields): boolean {
+/**
+ * Whether the slug and staged references agree wherever both revisions record them. `strict` also
+ * counts one revision recording them and the other not as a difference.
+ */
+function compatibleInternals(
+	a: RevisionData,
+	b: RevisionData,
+	fields: Fields,
+	strict: boolean,
+): boolean {
+	const aHasSlug = Object.hasOwn(a, "_slug");
+	const bHasSlug = Object.hasOwn(b, "_slug");
 	if (
-		Object.hasOwn(a, "_slug") &&
-		Object.hasOwn(b, "_slug") &&
-		slugOf(a._slug) !== slugOf(b._slug)
+		aHasSlug && bHasSlug ? slugOf(a._slug) !== slugOf(b._slug) : strict && aHasSlug !== bHasSlug
 	) {
 		return false;
 	}
@@ -43,11 +51,9 @@ function compatibleInternals(a: RevisionData, b: RevisionData, fields: Fields): 
 		if (fieldMode(descriptor) !== "relation") continue;
 		const left = stagedReferences(a, "_references", slug);
 		const right = stagedReferences(b, "_references", slug);
-		if (
-			left !== undefined &&
-			right !== undefined &&
-			valueKey("value", left) !== valueKey("value", right)
-		) {
+		if (left === undefined || right === undefined) {
+			if (strict && left !== right) return false;
+		} else if (valueKey("value", left) !== valueKey("value", right)) {
 			return false;
 		}
 	}
@@ -55,12 +61,27 @@ function compatibleInternals(a: RevisionData, b: RevisionData, fields: Fields): 
 }
 
 function sameContent(a: RevisionData, b: RevisionData, fields: Fields): boolean {
-	return fingerprint(a, fields) === fingerprint(b, fields) && compatibleInternals(a, b, fields);
+	return (
+		fingerprint(a, fields) === fingerprint(b, fields) && compatibleInternals(a, b, fields, false)
+	);
+}
+
+/** Whether restoring `version` over `current` would change nothing at all. */
+export function restoresNothing(
+	version: RevisionData,
+	current: RevisionData,
+	fields: Fields,
+): boolean {
+	return (
+		fingerprint(version, fields) === fingerprint(current, fields) &&
+		compatibleInternals(version, current, fields, true)
+	);
 }
 
 /**
- * The id of the newest revision in `older` (newest first) whose content equals `current`, when
- * `current` differs from `previous`; otherwise null.
+ * The id of the oldest revision in `older` (newest first) whose content equals `current`, when
+ * `current` differs from `previous`; otherwise null. The oldest is the original, so restoring an
+ * earlier restore still names the version the content came from.
  */
 export function findRestoredSource(
 	current: RevisionLike,
@@ -70,5 +91,5 @@ export function findRestoredSource(
 ): string | null {
 	// Saving again without changes copies the previous version; that isn't a restore.
 	if (!previous || sameContent(current.data, previous.data, fields)) return null;
-	return older.find((revision) => sameContent(current.data, revision.data, fields))?.id ?? null;
+	return older.findLast((revision) => sameContent(current.data, revision.data, fields))?.id ?? null;
 }

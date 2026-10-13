@@ -1709,14 +1709,17 @@ export function ContentEditor({
 					<div
 						ref={canvasRef}
 						data-emdash-editor-canvas=""
-						className="min-w-0 flex-1 overflow-y-auto [--emdash-editor-sticky-top:0px]"
+						// A stable gutter keeps the page from sliding sideways when a shorter version
+						// or edit takes the scrollbar away.
+						className="min-w-0 flex-1 overflow-y-auto [scrollbar-gutter:stable] [--emdash-editor-sticky-top:0px]"
 					>
 						{!pinEditorBar && editorBar}
 						<div
 							className={cn(
 								"emdash-editor-page mx-auto max-w-[52rem] space-y-6 pt-8 sm:pt-12",
-								// The revision bar settles under the last block instead of above a gap.
-								isViewing ? "pb-0" : "pb-16",
+								// The revision bar settles under the last block, and stays at the bottom of
+								// the canvas when the version is too short to fill it.
+								isViewing ? "flex min-h-full flex-col pb-0" : "pb-16",
 							)}
 						>
 							{notice}
@@ -1806,7 +1809,7 @@ export function ContentEditor({
 								</div>
 							</fieldset>
 							{isViewing ? (
-								<RevisionViewErrorBoundary key={revisionView.viewingId}>
+								<RevisionViewErrorBoundary resetKey={revisionView.viewingId}>
 									{revisionView.diff ? (
 										<RevisionViewCanvas
 											diff={revisionView.diff}
@@ -1833,6 +1836,11 @@ export function ContentEditor({
 									authorColor={revisionView.authorColor}
 									isCurrent={revisionView.isCurrent}
 									isPublished={revisionView.isPublished}
+									sameAsCurrent={revisionView.sameAsCurrent}
+									hasDraft={
+										Boolean(item.draftRevisionId) && item.draftRevisionId !== item.liveRevisionId
+									}
+									scheduled={hasSchedule}
 									canShowChanges={revisionView.diff?.hasPrevious ?? false}
 									showChanges={revisionView.showChanges}
 									onShowChangesChange={revisionView.setShowChanges}

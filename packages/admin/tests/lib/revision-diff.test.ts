@@ -4,6 +4,8 @@ import {
 	diffRevisions,
 	diffVersion,
 	findRestoredSource,
+	restoredSources,
+	restoresNothing,
 	makeSnippet,
 } from "../../src/lib/revision-diff";
 import type {
@@ -956,11 +958,28 @@ describe("revision diff: restored versions", () => {
 		expect(findRestoredSource(a, null, [], fields)).toBeNull();
 	});
 
-	it("picks the newest matching version and ignores regenerated keys", () => {
-		const newerCopy = revision("a2", { ...a.data });
+	it("names the original when a restore copies an earlier restore, ignoring regenerated keys", () => {
+		const restoredCopy = revision("a2", { ...a.data });
 		const c = revision("c", { title: "First", content: rekey(a.data.content) });
-		expect(findRestoredSource(c, b, [newerCopy, a], fields)).toBe("a2");
-		expect(findRestoredSource(c, b, [a], fields)).toBe("a");
+		expect(findRestoredSource(c, b, [restoredCopy, a], fields)).toBe("a");
+	});
+
+	it("treats a slug only one version records as a change when deciding whether a restore does anything", () => {
+		const withSlug = { ...a.data, _slug: "first" };
+		expect(restoresNothing(withSlug, { ...a.data }, fields)).toBe(false);
+		expect(restoresNothing(withSlug, { ...withSlug }, fields)).toBe(true);
+		expect(findRestoredSource(revision("c", withSlug), b, [a], fields)).toBe("a");
+	});
+
+	it("maps each restored copy in a list to the version it restored", () => {
+		const restoredCopy = revision("a2", { ...a.data });
+		const third = revision("c", { title: "Third", content: [block(STORY[2] ?? "")] });
+		const again = revision("a3", { ...a.data });
+		const sources = restoredSources([again, third, restoredCopy, b, a], fields);
+		expect([...sources]).toEqual([
+			["a3", "a"],
+			["a2", "a"],
+		]);
 	});
 
 	it("chooses created or earliest for the oldest loaded version", () => {

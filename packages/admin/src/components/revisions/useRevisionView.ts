@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import * as React from "react";
 
 import type { ContentItem, RevisionListItem, RevisionListResponse } from "../../lib/api";
-import { diffVersion } from "../../lib/revision-diff/index.js";
+import { diffVersion, restoresNothing } from "../../lib/revision-diff/index.js";
 import type { DiffFieldDescriptor, RevisionDiff } from "../../lib/revision-diff/types.js";
 import { isolate } from "../../lib/utils.js";
 import {
@@ -62,6 +62,8 @@ export interface RevisionView {
 	label: string;
 	isCurrent: boolean;
 	isPublished: boolean;
+	/** The viewed version holds the same content as the current one, so restoring it changes nothing. */
+	sameAsCurrent: boolean;
 	hasOlder: boolean;
 	hasNewer: boolean;
 	showChanges: boolean;
@@ -92,7 +94,6 @@ export interface RevisionView {
 
 const CHANGE_TOP_MARGIN_PX = 24;
 
-type PendingScroll = "top" | "saved" | null;
 type PendingFocus = "bar" | "opener" | "afterRestore" | null;
 
 function prefersReducedMotion(): boolean {
@@ -145,6 +146,7 @@ export function useRevisionView({
 	const [showChanges, setShowChangesState] = React.useState(true);
 	const [listLimit, setListLimit] = React.useState(REVISION_LIST_LIMIT);
 	const [restorePending, setRestorePending] = React.useState(false);
+	const [rowToFocus, setRowToFocus] = React.useState<RevisionViewContextValue["rowToFocus"]>(null);
 	const [announcement, setAnnouncement] = React.useState("");
 	const [changeRequest, setChangeRequest] = React.useState(0);
 
@@ -153,12 +155,17 @@ export function useRevisionView({
 	const restoreRef = React.useRef<{ fromDraftId: string | null; toDraftId: string | null } | null>(
 		null,
 	);
+	// Versions open where the editor was scrolled and keep that place from one to the next, even
+	// after a shorter version pulled the canvas up. `applied` is where the canvas landed.
+	const scrollGoalRef = React.useRef<{ top: number; applied: number } | null>(null);
 	if (identity !== previousIdentity) {
 		setPreviousIdentity(identity);
 		setViewingId(null);
 		setListLimit(REVISION_LIST_LIMIT);
 		setRestorePending(false);
+		setRowToFocus(null);
 		restoreRef.current = null;
+		scrollGoalRef.current = null;
 	}
 
 	const isViewing = enabled && viewingId !== null;
@@ -236,6 +243,12 @@ export function useRevisionView({
 	const revision = isViewing ? (shown?.revision ?? null) : null;
 	const diff = isViewing ? (shown?.diff ?? null) : null;
 	const diffFailed = isViewing && Boolean(shown?.failed);
+	const currentItem = list?.items.find((item) => item.id === currentRevisionId);
+	const sameAsCurrent =
+		revision !== null &&
+		revision.id !== currentRevisionId &&
+		currentItem !== undefined &&
+		restoresNothing(revision.data, currentItem.data, fields);
 
 	const colors = React.useMemo(() => revisionAuthorColors(list?.items ?? []), [list?.items]);
 	const authorColor: AuthorColor = revision ? revisionAuthorColor(colors, revision) : "neutral";
@@ -267,7 +280,7 @@ export function useRevisionView({
 	const dockRef = React.useRef<HTMLDivElement | null>(null);
 	const openerRef = React.useRef<HTMLElement | null>(null);
 	const savedScrollRef = React.useRef(0);
-	const pendingScrollRef = React.useRef<PendingScroll>(null);
+	const pendingScrollRef = React.useRef<"goal" | "saved" | null>(null);
 	const pendingFocusRef = React.useRef<PendingFocus>(null);
 	const pendingAnnounceRef = React.useRef(false);
 	const pendingStepRef = React.useRef(false);
@@ -283,12 +296,22 @@ export function useRevisionView({
 		announceFrameRef.current = requestAnimationFrame(() => setAnnouncement(message));
 	}, []);
 
-	const select = React.useCallback((revisionId: string) => {
-		setViewingId(revisionId);
-		viewedWasCurrentRef.current = revisionId === currentRevisionIdRef.current;
-		pendingScrollRef.current = "top";
-		pendingAnnounceRef.current = true;
-	}, []);
+	const select = React.useCallback(
+		(revisionId: string) => {
+			setViewingId(revisionId);
+			viewedWasCurrentRef.current = revisionId === currentRevisionIdRef.current;
+			pendingAnnounceRef.current = true;
+			const canvas = canvasRef.current;
+			if (!canvas) return;
+			const goal = scrollGoalRef.current;
+			// Scrolling since the last version opened sets a new place to keep.
+			if (!goal || canvas.scrollTop !== goal.applied) {
+				scrollGoalRef.current = { top: canvas.scrollTop, applied: canvas.scrollTop };
+			}
+			pendingScrollRef.current = "goal";
+		},
+		[canvasRef],
+	);
 
 	const view = React.useCallback<RevisionViewContextValue["view"]>(
 		(revisionId, options) => {
@@ -309,6 +332,7 @@ export function useRevisionView({
 				pendingFocusRef.current = "bar";
 			}
 			pendingStepRef.current = false;
+			setRowToFocus(null);
 			select(revisionId);
 		},
 		[canvasRef, select],
@@ -322,6 +346,7 @@ export function useRevisionView({
 			setViewingId(null);
 			pendingStepRef.current = false;
 			pendingChangeRef.current = null;
+			scrollGoalRef.current = null;
 			pendingScrollRef.current = "saved";
 			pendingFocusRef.current = "opener";
 			announce(message);
@@ -398,9 +423,18 @@ export function useRevisionView({
 		setViewingId(null);
 		pendingStepRef.current = false;
 		pendingChangeRef.current = null;
-		pendingScrollRef.current = "top";
+		// The restored draft takes the version's place, so the editor stays where it was scrolled.
+		savedScrollRef.current = canvasRef.current?.scrollTop ?? 0;
+		scrollGoalRef.current = null;
+		pendingScrollRef.current = "saved";
 		pendingFocusRef.current = "afterRestore";
-	}, []);
+		const restoredId = currentRevisionIdRef.current;
+		if (listVisibleRef.current && restoredId) {
+			setRowToFocus({ revisionId: restoredId, opener: openerRef.current });
+		}
+	}, [canvasRef]);
+
+	const clearRowToFocus = React.useCallback(() => setRowToFocus(null), []);
 
 	const returnFocus = React.useCallback(() => {
 		const opener = openerRef.current;
@@ -412,9 +446,14 @@ export function useRevisionView({
 	React.useLayoutEffect(() => {
 		const canvas = canvasRef.current;
 		const scroll = pendingScrollRef.current;
-		if (scroll && canvas) {
+		const goal = scrollGoalRef.current;
+		if (canvas && scroll === "saved") {
 			pendingScrollRef.current = null;
-			canvas.scrollTop = scroll === "top" ? 0 : savedScrollRef.current;
+			canvas.scrollTop = savedScrollRef.current;
+		} else if (canvas && scroll === "goal" && goal && hasRevision) {
+			pendingScrollRef.current = null;
+			canvas.scrollTop = goal.top;
+			goal.applied = canvas.scrollTop;
 		}
 		const focus = pendingFocusRef.current;
 		if (focus === "bar") {
@@ -541,6 +580,9 @@ export function useRevisionView({
 			viewingDiff: diff,
 			currentRevisionId,
 			liveRevisionId: liveRevisionId ?? null,
+			fields,
+			rowToFocus,
+			clearRowToFocus,
 			listLimit,
 			showOlderVersions,
 			view,
@@ -553,6 +595,9 @@ export function useRevisionView({
 			diff,
 			currentRevisionId,
 			liveRevisionId,
+			fields,
+			rowToFocus,
+			clearRowToFocus,
 			listLimit,
 			showOlderVersions,
 			view,
@@ -570,6 +615,7 @@ export function useRevisionView({
 		label: revision ? t`Version from ${when}` : "",
 		isCurrent: revision !== null && revision.id === currentRevisionId,
 		isPublished: revision !== null && revision.id === liveRevisionId,
+		sameAsCurrent,
 		hasOlder,
 		hasNewer,
 		showChanges,

@@ -75,6 +75,9 @@ function makeView(overrides: Partial<RevisionViewContextValue> = {}): RevisionVi
 		viewingDiff: null,
 		currentRevisionId: "rev-3",
 		liveRevisionId: "rev-2",
+		fields: { title: { kind: "string", label: "Title" } },
+		rowToFocus: null,
+		clearRowToFocus: vi.fn(),
 		listLimit: REVISION_LIST_LIMIT,
 		showOlderVersions: vi.fn(),
 		view: vi.fn(),
@@ -127,6 +130,68 @@ describe("RevisionHistory", () => {
 		await expect.element(yesterday.getByRole("button", { name: UNKNOWN_ROW })).toBeInTheDocument();
 		await expect.element(screen.getByText("Current version", { exact: true })).toBeVisible();
 		await expect.element(screen.getByText("Published", { exact: true })).toBeVisible();
+	});
+
+	it("says which version a restored copy came from", async () => {
+		mockFetchRevisions.mockResolvedValue({
+			items: [
+				makeRevision({ id: "rev-3", data: { title: "First draft" } }),
+				makeRevision({ id: "rev-2", data: { title: "Second draft" } }),
+				makeRevision({
+					id: "rev-1",
+					data: { title: "First draft" },
+					createdAt: localTimestamp(1, 10, 0),
+				}),
+			],
+			total: 3,
+		});
+		const screen = await renderExpanded(makeView({ liveRevisionId: null }));
+
+		await expect
+			.element(
+				screen.getByRole("button", {
+					name: /^Today, 12:00\sPM, Current version, Maya Chen, Restored from \u2068Yesterday, 10:00\sAM\u2069$/,
+				}),
+			)
+			.toBeInTheDocument();
+		expect(screen.getByText(/^Restored from/).elements()).toHaveLength(1);
+	});
+
+	it("moves focus from the version that was restored to the new current one", async () => {
+		const history = <RevisionHistory collection="posts" entryId="entry-1" reserveHeaderEnd />;
+		const screen = await renderExpanded(makeView());
+		const sam = screen.getByRole("button", { name: SAM_ROW });
+		await expect.element(sam).toBeInTheDocument();
+		sam.element().focus();
+
+		const clearRowToFocus = vi.fn();
+		const rowToFocus = { revisionId: "rev-3", opener: sam.element() as HTMLElement };
+		await screen.rerender(
+			<RevisionViewProvider value={makeView({ rowToFocus, clearRowToFocus })}>
+				{history}
+			</RevisionViewProvider>,
+		);
+		await expect.element(screen.getByRole("button", { name: MAYA_ROW })).toHaveFocus();
+		expect(clearRowToFocus).toHaveBeenCalled();
+	});
+
+	it("leaves focus where the writer moved it after the restore", async () => {
+		const history = <RevisionHistory collection="posts" entryId="entry-1" reserveHeaderEnd />;
+		const screen = await renderExpanded(makeView());
+		const sam = screen.getByRole("button", { name: SAM_ROW });
+		const unknown = screen.getByRole("button", { name: UNKNOWN_ROW });
+		await expect.element(unknown).toBeInTheDocument();
+		unknown.element().focus();
+
+		const clearRowToFocus = vi.fn();
+		const rowToFocus = { revisionId: "rev-3", opener: sam.element() as HTMLElement };
+		await screen.rerender(
+			<RevisionViewProvider value={makeView({ rowToFocus, clearRowToFocus })}>
+				{history}
+			</RevisionViewProvider>,
+		);
+		await vi.waitFor(() => expect(clearRowToFocus).toHaveBeenCalled());
+		await expect.element(unknown).toHaveFocus();
 	});
 
 	it("names an account without a display name differently from a missing author", async () => {
@@ -204,6 +269,44 @@ describe("RevisionHistory", () => {
 
 		await changes.getByRole("button", { name: "Changed the title" }).click();
 		expect(view.goToChange).toHaveBeenCalledWith("f-title");
+	});
+
+	it("keeps a picked version under the pointer when the changes listed above it close", async () => {
+		const changes = ["A", "B", "C", "D", "E"].map(
+			(label): ChangeItem => ({
+				kind: "field",
+				field: { slug: label.toLowerCase(), label: `Field ${label}` },
+				target: `f-${label}`,
+			}),
+		);
+		function Picking() {
+			const [viewingId, setViewingId] = React.useState("rev-3");
+			const view = makeView({
+				viewingId,
+				viewingDiff: makeDiff(viewingId === "rev-3" ? changes : []),
+				view: (revisionId) => setViewingId(revisionId),
+			});
+			return (
+				<div data-testid="scroller" style={{ height: 240, overflowY: "auto" }}>
+					<RevisionViewProvider value={view}>
+						<RevisionHistory collection="posts" entryId="entry-1" />
+					</RevisionViewProvider>
+					<div style={{ height: 1000 }} />
+				</div>
+			);
+		}
+		const screen = await render(<Picking />);
+		await screen.getByRole("button", { name: REVISIONS_TRIGGER }).click();
+		await expect.element(screen.getByText("Field E", { exact: false })).toBeVisible();
+
+		const scroller = screen.getByTestId("scroller").element();
+		const row = screen.getByRole("button", { name: UNKNOWN_ROW });
+		scroller.scrollTop = 200;
+		const top = row.element().getBoundingClientRect().top;
+		await row.click();
+
+		await expect.element(screen.getByText("Field E", { exact: false })).not.toBeInTheDocument();
+		expect(row.element().getBoundingClientRect().top).toBe(top);
 	});
 
 	it("shows five changes, then reveals the rest and focuses the first new one", async () => {

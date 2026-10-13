@@ -1,6 +1,6 @@
-import { Button, Switch } from "@cloudflare/kumo";
+import { Button, Switch, Tooltip } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
-import { ArrowCounterClockwise } from "@phosphor-icons/react";
+import { ArrowCounterClockwise, X } from "@phosphor-icons/react";
 import * as React from "react";
 
 import type { ContentItem, RevisionListItem } from "../../lib/api";
@@ -10,24 +10,6 @@ import { revisionDate, useRevisionFormat, type AuthorColor } from "./revision-fo
 import { RevisionRestoreDialog } from "./RevisionRestoreDialog.js";
 import type { RevisionStepDirection } from "./useRevisionView.js";
 
-/**
- * How the bar fits its width: one row with full labels, one row with the short "Done", or the
- * actions stacked under the version.
- */
-export type RevisionBarLayout = "wide" | "compact" | "stacked";
-
-/** The narrowest dock, in rem, that holds each one-row layout in English. */
-const BAR_WIDTHS_REM = {
-	plain: { wide: 36, compact: 32 },
-	stepper: { wide: 41, compact: 37 },
-} as const;
-
-const LAYOUT_STEPS: Record<RevisionBarLayout, RevisionBarLayout> = {
-	wide: "compact",
-	compact: "stacked",
-	stacked: "stacked",
-};
-
 export interface RevisionViewBarProps {
 	collection: string;
 	entryId: string;
@@ -35,7 +17,13 @@ export interface RevisionViewBarProps {
 	authorColor: AuthorColor;
 	isCurrent: boolean;
 	isPublished: boolean;
-	/** The version has an older one to compare with, so there are changes to show. */
+	/** The version holds the same content as the current one, so there is nothing to restore. */
+	sameAsCurrent: boolean;
+	/** The entry has a draft, which restoring replaces. */
+	hasDraft: boolean;
+	/** The entry is scheduled, so a restored version publishes on its own. */
+	scheduled: boolean;
+	/** The version has an older one to compare with. Without one, Show changes stays in place but disabled. */
 	canShowChanges: boolean;
 	showChanges: boolean;
 	onShowChangesChange: (showChanges: boolean) => void;
@@ -58,54 +46,6 @@ export interface RevisionViewBarProps {
 	dockRef: React.RefObject<HTMLDivElement | null>;
 }
 
-function useBarLayout(
-	dockRef: React.RefObject<HTMLDivElement | null>,
-	cardRef: React.RefObject<HTMLElement | null>,
-	titleRef: React.RefObject<HTMLElement | null>,
-	widths: { wide: number; compact: number },
-	contentKey: string,
-): RevisionBarLayout {
-	const [layout, setLayout] = React.useState<RevisionBarLayout>("wide");
-	React.useLayoutEffect(() => {
-		const dock = dockRef.current;
-		if (!dock) return;
-		const measure = () => {
-			const style = getComputedStyle(dock);
-			const width =
-				dock.clientWidth -
-				parseFloat(style.paddingInlineStart) -
-				parseFloat(style.paddingInlineEnd);
-			const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
-			setLayout(
-				width >= widths.wide * rem ? "wide" : width >= widths.compact * rem ? "compact" : "stacked",
-			);
-		};
-		measure();
-		const observer = new ResizeObserver(measure);
-		observer.observe(dock);
-		return () => observer.disconnect();
-	}, [dockRef, widths, contentKey]);
-	// Longer translations and wider fonts can need more room than the English widths allow for.
-	React.useLayoutEffect(() => {
-		if (layout === "stacked") return;
-		const card = cardRef.current;
-		const title = titleRef.current;
-		if (!card || !title) return;
-		// The card's widths are rounded, so content with fractional widths can look a pixel too wide.
-		if (card.scrollWidth - card.clientWidth > 1 || isTextClipped(title)) {
-			setLayout((current) => (current === layout ? LAYOUT_STEPS[layout] : current));
-		}
-	});
-	return layout;
-}
-
-/** Whether truncated text is cut short, measured without the rounding of scroll widths. */
-function isTextClipped(element: HTMLElement): boolean {
-	const text = document.createRange();
-	text.selectNodeContents(element);
-	return text.getBoundingClientRect().width > element.getBoundingClientRect().width;
-}
-
 /** The bar at the bottom of the canvas while a saved version is shown in place of the editor. */
 export function RevisionViewBar({
 	collection,
@@ -114,6 +54,9 @@ export function RevisionViewBar({
 	authorColor,
 	isCurrent,
 	isPublished,
+	sameAsCurrent,
+	hasDraft,
+	scheduled,
 	canShowChanges,
 	showChanges,
 	onShowChangesChange,
@@ -137,20 +80,13 @@ export function RevisionViewBar({
 	const format = useRevisionFormat();
 	const titleId = React.useId();
 	const [restoreOpen, setRestoreOpen] = React.useState(false);
-	const cardRef = React.useRef<HTMLElement>(null);
-	const statuses = [isCurrent && t`Current version`, isPublished && t`Published`].filter(
-		(label): label is string => Boolean(label),
-	);
-	const canRestore = !isCurrent && !readOnly;
+	const nothingToRestore = isCurrent
+		? t`Current version`
+		: sameAsCurrent
+			? t`Same as current version`
+			: null;
+	const canRestore = !nothingToRestore && !readOnly;
 	const when = format.when(revisionDate(revision.createdAt));
-	const layout = useBarLayout(
-		dockRef,
-		cardRef,
-		titleRef,
-		showStepper ? BAR_WIDTHS_REM.stepper : BAR_WIDTHS_REM.plain,
-		[when, canShowChanges, canRestore].join("|"),
-	);
-	const stacked = layout === "stacked";
 	const olderRef = React.useRef<HTMLButtonElement>(null);
 	const newerRef = React.useRef<HTMLButtonElement>(null);
 	const lastStepRef = React.useRef<RevisionStepDirection | null>(null);
@@ -176,90 +112,115 @@ export function RevisionViewBar({
 	return (
 		<div
 			ref={dockRef}
-			className="emdash-revision-dock pointer-events-none sticky bottom-0 z-20 -mx-(--emdash-editor-gutter) mt-2 flex justify-center px-(--emdash-editor-gutter) pt-8 pb-[max(1rem,env(safe-area-inset-bottom))]"
+			className="emdash-revision-dock pointer-events-none sticky bottom-0 z-20 -mx-(--emdash-editor-gutter) mt-auto flex justify-center px-(--emdash-editor-gutter) pt-8 pb-[max(1rem,env(safe-area-inset-bottom))]"
 		>
 			<section
-				ref={cardRef}
 				aria-labelledby={titleId}
 				data-author-color={authorColor}
-				className={cn(
-					"emdash-revision-bar pointer-events-auto flex max-w-full items-center rounded-[0.875rem] bg-kumo-base p-1.5 ring ring-kumo-line",
-					stacked ? "w-full flex-wrap gap-1.5" : "gap-3 ps-4",
-				)}
+				className="emdash-revision-bar @container pointer-events-auto w-full max-w-[30rem] rounded-[0.875rem] bg-kumo-base ring ring-kumo-line"
 			>
+				{/* One line when the bar is wide enough for the version and its buttons, otherwise two
+				    at every version, so stepping through versions never moves the buttons. */}
 				<div
 					className={cn(
-						"flex min-w-0 flex-1 items-center gap-1",
-						stacked && "basis-full",
-						stacked && !showStepper && "px-2.5",
+						"grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 py-1.5 ps-4 pe-1.5",
+						!showStepper && "@min-[30rem]:grid-cols-[auto_minmax(0,1fr)_auto] @min-[30rem]:gap-x-3",
 					)}
 				>
-					{showStepper && (
-						<Button
-							ref={olderRef}
-							type="button"
-							variant="ghost"
-							shape="square"
-							aria-label={t`Older version`}
-							icon={<CaretPrev className="size-4" />}
-							disabled={!hasOlder}
-							onClick={() => step("older")}
-						/>
-					)}
-					<div className={cn("grid min-w-0", showStepper && "flex-1 justify-items-center")}>
-						<h2
-							ref={titleRef}
-							id={titleId}
-							tabIndex={-1}
-							className="max-w-full truncate text-base font-semibold focus:outline-none"
-						>
-							{when}
-						</h2>
-						<p className="flex max-w-full min-w-0 items-center gap-1.5 text-xs leading-4 text-kumo-subtle">
+					<h2
+						ref={titleRef}
+						id={titleId}
+						tabIndex={-1}
+						className="truncate text-base font-semibold focus:outline-none"
+					>
+						{when}
+					</h2>
+					<p
+						className={cn(
+							"col-span-2 row-start-2 flex min-w-0 items-center gap-x-1.5 pb-1.5 text-base text-kumo-subtle",
+							!showStepper &&
+								"@min-[30rem]:col-span-1 @min-[30rem]:col-start-2 @min-[30rem]:row-start-1 @min-[30rem]:pb-0",
+						)}
+					>
+						<span className="flex min-w-0 items-center gap-1.5">
 							<span
 								aria-hidden="true"
 								className="size-2 shrink-0 rounded-full bg-(--emdash-author)"
 							/>
 							<bdi className="truncate">{format.author(revision.author)}</bdi>
-							{statuses.map((label) => (
-								<React.Fragment key={label}>
-									<span aria-hidden="true">·</span>
-									<span className="sr-only">, </span>
-									<span className="shrink-0">{label}</span>
-								</React.Fragment>
-							))}
-						</p>
-					</div>
-					{showStepper && (
-						<Button
-							ref={newerRef}
-							type="button"
-							variant="ghost"
-							shape="square"
-							aria-label={t`Newer version`}
-							icon={<CaretNext className="size-4" />}
-							disabled={!hasNewer}
-							onClick={() => step("newer")}
+						</span>
+						{isPublished && (
+							<span className="flex shrink-0 items-center gap-1.5">
+								<span aria-hidden="true">·</span>
+								<span className="sr-only">, </span>
+								<span>{t`Published`}</span>
+							</span>
+						)}
+					</p>
+					<div
+						className={cn(
+							"col-start-2 row-start-1 flex items-center",
+							!showStepper && "@min-[30rem]:col-start-3",
+						)}
+					>
+						{showStepper && (
+							<>
+								<Button
+									ref={olderRef}
+									type="button"
+									variant="ghost"
+									shape="square"
+									aria-label={t`Older version`}
+									icon={<CaretPrev className="size-4" />}
+									disabled={!hasOlder}
+									onClick={() => step("older")}
+								/>
+								<Button
+									ref={newerRef}
+									type="button"
+									variant="ghost"
+									shape="square"
+									aria-label={t`Newer version`}
+									icon={<CaretNext className="size-4" />}
+									disabled={!hasNewer}
+									onClick={() => step("newer")}
+								/>
+							</>
+						)}
+						<Tooltip
+							content={t`Back to editing (Esc)`}
+							// The open tooltip takes the Esc it advertises, so that Esc has to leave too.
+							onOpenChange={(open, details) => {
+								if (!open && details.reason === "escape-key") onExit();
+							}}
+							render={
+								<Button
+									type="button"
+									variant="ghost"
+									shape="square"
+									aria-label={t`Back to editing`}
+									aria-keyshortcuts="Escape"
+									icon={<X aria-hidden="true" />}
+									onClick={onExit}
+								/>
+							}
 						/>
-					)}
+					</div>
 				</div>
-				<div
-					className={cn("flex shrink-0 items-center gap-1.5", stacked && "basis-full justify-end")}
-				>
-					{canShowChanges && (
-						<div className={cn("ps-1.5 pe-2", stacked && "me-auto")}>
-							<Switch
-								size="sm"
-								label={t`Show changes`}
-								checked={showChanges}
-								onCheckedChange={onShowChangesChange}
-							/>
-						</div>
-					)}
-					<Button type="button" variant="secondary" onClick={onExit}>
-						{layout === "wide" ? t`Back to editing` : t`Done`}
-					</Button>
-					{canRestore && (
+				{/* The content box holds Restore's height when there's nothing to restore, so the bar
+				    keeps its size from one version to the next. */}
+				<div className="box-content flex min-h-9 items-center justify-between gap-3 border-t border-kumo-line py-1.5 ps-4 pe-1.5">
+					<Switch
+						size="sm"
+						controlFirst={false}
+						label={
+							<span className="font-normal whitespace-nowrap text-kumo-subtle">{t`Show changes`}</span>
+						}
+						checked={showChanges}
+						disabled={!canShowChanges}
+						onCheckedChange={onShowChangesChange}
+					/>
+					{canRestore ? (
 						<Button
 							type="button"
 							variant="primary"
@@ -269,6 +230,12 @@ export function RevisionViewBar({
 						>
 							{t`Restore`}
 						</Button>
+					) : (
+						nothingToRestore && (
+							<span className="min-w-0 truncate pe-2.5 text-base text-kumo-subtle">
+								{nothingToRestore}
+							</span>
+						)
 					)}
 				</div>
 			</section>
@@ -278,6 +245,8 @@ export function RevisionViewBar({
 				collection={collection}
 				entryId={entryId}
 				revision={revision}
+				hasDraft={hasDraft}
+				scheduled={scheduled}
 				isDirty={isDirty}
 				restorePending={restorePending}
 				onRestoreStart={onRestoreStart}

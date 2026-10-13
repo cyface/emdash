@@ -7,18 +7,35 @@ export function RevisionViewError() {
 	return <Banner variant="error" role="alert" title={t`This version can't be shown.`} />;
 }
 
+interface RevisionViewErrorBoundaryProps {
+	/** The shown version. A new one gets another try without remounting what's on screen. */
+	resetKey: string | null;
+	children: React.ReactNode;
+}
+
 interface RevisionViewErrorBoundaryState {
 	hasError: boolean;
+	resetKey: string | null;
 }
 
 /** Keeps a version that fails to render from taking the editor down with it. */
 export class RevisionViewErrorBoundary extends React.Component<
-	{ children: React.ReactNode },
+	RevisionViewErrorBoundaryProps,
 	RevisionViewErrorBoundaryState
 > {
-	override state: RevisionViewErrorBoundaryState = { hasError: false };
+	override state: RevisionViewErrorBoundaryState = {
+		hasError: false,
+		resetKey: this.props.resetKey,
+	};
 
-	static getDerivedStateFromError(): RevisionViewErrorBoundaryState {
+	static getDerivedStateFromProps(
+		props: RevisionViewErrorBoundaryProps,
+		state: RevisionViewErrorBoundaryState,
+	): Partial<RevisionViewErrorBoundaryState> | null {
+		return props.resetKey === state.resetKey ? null : { hasError: false, resetKey: props.resetKey };
+	}
+
+	static getDerivedStateFromError(): Partial<RevisionViewErrorBoundaryState> {
 		return { hasError: true };
 	}
 
