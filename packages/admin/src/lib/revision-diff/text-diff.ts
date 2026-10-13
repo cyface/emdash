@@ -28,15 +28,14 @@ export function plainRuns(text: string): TextRun[] {
 	return text ? [{ text, marks: EMPTY_MARKS }] : [];
 }
 
-/** The runs of a text as one kind of segment: unchanged, or wholly added or removed. */
-export function wholeText(runs: readonly TextRun[], change: DiffSegment["change"]): TextDiff {
+/** The large-text fallback: the new text as unchanged segments. */
+function wholeText(runs: readonly TextRun[]): TextDiff {
 	return {
-		mode: "inline",
-		textChanged: change !== "same" && runs.length > 0,
-		marksChanged: false,
+		mode: "whole",
+		textChanged: true,
 		segments: runs.map((run) => ({
 			text: run.text,
-			change,
+			change: "same",
 			marks: run.marks,
 			hunk: null,
 			formatChanged: false,
@@ -60,16 +59,11 @@ export function diffText(
 
 	if (oldText === newText) {
 		appendSame(segments, oldRuns, newRuns);
-		return {
-			mode: "inline",
-			textChanged: false,
-			marksChanged: segments.some((segment) => segment.formatChanged),
-			segments,
-		};
+		return { mode: "inline", textChanged: false, segments };
 	}
 
 	const hunks = diffHunks(oldText, newText, tokenize(oldText), tokenize(newText), context);
-	if (!hunks) return { ...wholeText(newRuns, "same"), mode: "whole", textChanged: true };
+	if (!hunks) return wholeText(newRuns);
 
 	const oldStarts = runStarts(oldRuns);
 	const newStarts = runStarts(newRuns);
@@ -88,12 +82,7 @@ export function diffText(
 			appendSegment(segments, { ...run, change: "added", hunk: id, formatChanged: false });
 		}
 	}
-	return {
-		mode: "inline",
-		textChanged: true,
-		marksChanged: segments.some((segment) => segment.formatChanged),
-		segments,
-	};
+	return { mode: "inline", textChanged: true, segments };
 }
 
 function joinRuns(runs: readonly TextRun[]): string {

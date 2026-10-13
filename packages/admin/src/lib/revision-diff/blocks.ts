@@ -1,9 +1,9 @@
 import { alignBlocks } from "./align.js";
 import type { DiffContext } from "./context.js";
 import { blockSignature, imageLayoutKey } from "./normalize.js";
-import { diffText, plainRuns, wholeText } from "./text-diff.js";
+import { diffText, plainRuns } from "./text-diff.js";
 import { tokenizeCode, tokenizeWords } from "./tokens.js";
-import type { BlockChange, BlockRow, DiffSegment, NormalizedBlock, TextDiff } from "./types.js";
+import type { BlockChange, BlockRow, NormalizedBlock } from "./types.js";
 
 /**
  * Rows of a Portable Text field in document order. A removed block sits right after the new
@@ -36,14 +36,7 @@ export function diffBlocks(
 	const addRemoved = (anchorIndex: number) => {
 		for (const o of removedAfter.get(anchorIndex) ?? []) {
 			const block = oldBlocks[o];
-			if (block) {
-				rows.push({
-					status: "removed",
-					targetId: targetId(),
-					block,
-					text: blockText(block, "removed"),
-				});
-			}
+			if (block) rows.push({ status: "removed", targetId: targetId(), block });
 		}
 	};
 
@@ -52,7 +45,7 @@ export function diffBlocks(
 		const o = oldIndexOf.get(n);
 		const previous = o === undefined ? undefined : oldBlocks[o];
 		if (o === undefined || !previous) {
-			rows.push({ status: "added", targetId: targetId(), block, text: blockText(block, "added") });
+			rows.push({ status: "added", targetId: targetId(), block });
 		} else {
 			rows.push(compareBlocks(previous, block, moved.has(o), targetId(), context));
 		}
@@ -69,14 +62,13 @@ function compareBlocks(
 	context: DiffContext,
 ): BlockRow {
 	if (blockSignature(previous) === blockSignature(block)) {
-		return { status: "unchanged", targetId, block, moved, text: blockText(block, "same") };
+		return { status: "unchanged", targetId, block, moved };
 	}
 	return {
 		status: "changed",
 		targetId,
 		block,
 		previous,
-		moved,
 		change: blockChange(previous, block, context),
 	};
 }
@@ -113,21 +105,7 @@ function blockChange(
 		return {
 			kind: "code",
 			code: diffText(plainRuns(previous.code), plainRuns(block.code), tokenizeCode, context),
-			languageChanged: previous.language !== block.language,
 		};
 	}
 	return { kind: "opaque" };
-}
-
-function blockText(block: NormalizedBlock, change: DiffSegment["change"]): TextDiff | null {
-	switch (block.kind) {
-		case "text":
-			return wholeText(block.runs, change);
-		case "image":
-			return wholeText(plainRuns(block.caption), change);
-		case "code":
-			return wholeText(plainRuns(block.code), change);
-		case "opaque":
-			return null;
-	}
 }

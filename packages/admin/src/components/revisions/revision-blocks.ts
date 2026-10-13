@@ -1,13 +1,6 @@
 import { localMediaFileUrl } from "../../lib/media-utils.js";
-import type {
-	BlockRow,
-	MarkAnnotation,
-	SegmentMarks,
-	TextBlock,
-	TextRun,
-} from "../../lib/revision-diff/types.js";
-
-type UnknownRecord = Record<string, unknown>;
+import { isRecord, spanRuns } from "../../lib/revision-diff/normalize.js";
+import type { BlockRow, TextBlock, TextRun } from "../../lib/revision-diff/types.js";
 
 /** Data attributes for the author-coloured ring on an added or changed thing, or the dimming on a removed one. */
 export function markAttributes({ ring = false, dim = false }: { ring?: boolean; dim?: boolean }) {
@@ -15,10 +8,6 @@ export function markAttributes({ ring = false, dim = false }: { ring?: boolean; 
 		...(ring ? { "data-revision-ring": "" } : {}),
 		...(dim ? { "data-revision-dim": "" } : {}),
 	};
-}
-
-export function isRecord(value: unknown): value is UnknownRecord {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function nonEmptyString(value: unknown): string | undefined {
@@ -87,40 +76,6 @@ export function imageLayout(image: unknown): ImageLayout {
 	};
 }
 
-const EMPTY_MARKS: SegmentMarks = { decorators: [], annotations: [] };
-
-/** Turns stored spans into runs, resolving each mark against the block's markDefs. */
-export function runsFromSpans(spans: unknown, markDefs: unknown): TextRun[] {
-	if (!Array.isArray(spans)) return [];
-	const defs = new Map<string, MarkAnnotation>();
-	if (Array.isArray(markDefs)) {
-		for (const def of markDefs) {
-			if (!isRecord(def) || typeof def._key !== "string" || typeof def._type !== "string") continue;
-			const { _key: _ignored, ...annotation } = def;
-			defs.set(def._key, { ...annotation, _type: def._type });
-		}
-	}
-	const runs: TextRun[] = [];
-	for (const span of spans) {
-		if (!isRecord(span) || typeof span.text !== "string") continue;
-		const decorators: string[] = [];
-		const annotations: MarkAnnotation[] = [];
-		if (Array.isArray(span.marks)) {
-			for (const mark of span.marks) {
-				if (typeof mark !== "string") continue;
-				const def = defs.get(mark);
-				if (def) annotations.push(def);
-				else decorators.push(mark);
-			}
-		}
-		runs.push({
-			text: span.text,
-			marks: decorators.length || annotations.length ? { decorators, annotations } : EMPTY_MARKS,
-		});
-	}
-	return runs;
-}
-
 export interface TableCellView {
 	key: string;
 	header: boolean;
@@ -165,7 +120,7 @@ export function tableRows(raw: unknown): TableRowView[] | null {
 				colSpan: cellSpan(cell.colspan),
 				rowSpan: cellSpan(cell.rowspan),
 				textAlign: isCellAlignment(cell.textAlign) ? cell.textAlign : undefined,
-				runs: runsFromSpans(cell.content, cell.markDefs ?? raw.markDefs),
+				runs: spanRuns(cell.content, cell.markDefs ?? raw.markDefs) ?? [],
 			});
 		}
 		rows.push({ key: nonEmptyString(row._key) ?? String(rowIndex), cells });

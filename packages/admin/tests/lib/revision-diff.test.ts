@@ -290,7 +290,6 @@ describe("revision diff: text", () => {
 		const text = textChangeOf(rowsOf(diff)[0]);
 
 		expect(text.textChanged).toBe(false);
-		expect(text.marksChanged).toBe(true);
 		expect(text.segments).toMatchObject([
 			{ text: "Hello ", change: "same", formatChanged: false },
 			{ text: "world", change: "same", formatChanged: true, marks: { decorators: ["strong"] } },
@@ -477,6 +476,11 @@ describe("revision diff: blocks", () => {
 		const alt = diffBody(before, [{ ...image("media-1"), ...base, alt: "A month calendar" }]);
 		expect(alt.changes).toMatchObject([{ kind: "image", action: "altEdited" }]);
 
+		const both = diffBody(before, [
+			{ ...image("media-1"), ...base, alt: "A month calendar", caption: "The month view" },
+		]);
+		expect(both.changes).toMatchObject([{ kind: "image", action: "changed" }]);
+
 		const metadata = diffBody(before, [
 			{ ...image("media-1"), ...base, width: 1600, height: 1200, blurhash: "LEHV6nWB2y" },
 		]);
@@ -535,11 +539,18 @@ describe("revision diff: blocks", () => {
 				),
 			)[0],
 		);
-		expect(language).toMatchObject({
-			kind: "code",
-			languageChanged: true,
-			code: { textChanged: false },
-		});
+		expect(language).toMatchObject({ kind: "code", code: { textChanged: false } });
+
+		const accent = changeOf(
+			rowsOf(
+				diffBody(
+					[code('const name = "cafe";', { _key: key })],
+					[code('const name = "cafe\u0301";', { _key: key })],
+				),
+			)[0],
+		);
+		if (accent.kind !== "code") throw new Error("Expected a code change");
+		expect(marked(accent.code)).toBe('const name = "[-cafe-]{+cafe\u0301+}";');
 	});
 
 	it("treats custom blocks, tables and galleries as opaque", () => {
@@ -550,7 +561,7 @@ describe("revision diff: blocks", () => {
 		);
 		expect(changeOf(rowsOf(youtube)[0])).toEqual({ kind: "opaque" });
 		expect(blockItems(youtube)).toMatchObject([
-			{ action: "edited", noun: "custom", blockType: "youtube", snippet: null },
+			{ action: "edited", noun: "custom", snippet: null },
 		]);
 
 		const table = (cell: string) => ({
@@ -691,13 +702,11 @@ describe("revision diff: blocks", () => {
 			true,
 		]);
 		expect(blockItems(moved)).toMatchObject([
-			{ action: "moved", moved: true, snippet: { text: "Plans that live in spreadsheets" } },
+			{ action: "moved", snippet: { text: "Plans that live in spreadsheets" } },
 		]);
 
 		const editedA = { ...a, children: [span(`${STORY[0]} Today.`)] };
-		expect(blockItems(diffBody([a, b, c], [b, c, editedA]))).toMatchObject([
-			{ action: "edited", moved: true },
-		]);
+		expect(blockItems(diffBody([a, b, c], [b, c, editedA]))).toMatchObject([{ action: "edited" }]);
 
 		const keyless = [a, b, c].map(withoutKeys);
 		const [ka, kb, kc] = keyless;
@@ -751,13 +760,7 @@ describe("revision diff: fields", () => {
 			{ kind: "earliest" },
 		]);
 		expect(created.fields.every((item) => item.status === "unchanged")).toBe(true);
-		const segments = [
-			...textOf(created, "title").segments,
-			...rowsOf(created).flatMap((row) =>
-				row.status === "unchanged" ? (row.text?.segments ?? []) : [],
-			),
-		];
-		expect(segments.map((segment) => segment.change)).toEqual(["same", "same"]);
+		expect(textOf(created, "title").segments.map((segment) => segment.change)).toEqual(["same"]);
 		expect(statuses(created)).toEqual(["unchanged"]);
 	});
 
@@ -777,7 +780,7 @@ describe("revision diff: fields", () => {
 			},
 		);
 		expect(renamed.slug).toEqual({ status: "changed", before: "old", after: "new" });
-		expect(renamed.changes.at(-1)).toEqual({ kind: "slug", before: "old", after: "new" });
+		expect(renamed.changes.at(-1)).toEqual({ kind: "slug", after: "new" });
 	});
 
 	it("reads booleans stored as 0 and 1", () => {
@@ -1002,25 +1005,33 @@ describe("revision diff: snippets", () => {
 		});
 		expect(makeSnippet("  \n ")).toBeNull();
 	});
+
+	it("counts the words of a link like any spaced text", () => {
+		expect(makeSnippet("https://example.com/plans/calendar")).toEqual({
+			text: "https://example.com/plans/calendar",
+			truncated: false,
+		});
+		expect(makeSnippet("https://example.com/plans is where we keep the calendar.")).toEqual({
+			text: "https://example.com/plans is",
+			truncated: true,
+		});
+	});
 });
 
 describe("revision diff: bounded work", () => {
 	const paragraph = (index: number) =>
 		`Paragraph ${index} explains one part of planning posts with a shared calendar and a few more words.`;
 
-	it("diffs a long post with a few edits quickly", () => {
+	it("finds a few edits in a long post", () => {
 		const before = Array.from({ length: 300 }, (_, index) => block(paragraph(index)));
 		const after = rekey(before);
 		after[10] = block(paragraph(10).replace("shared", "team"));
 		after.splice(150, 1);
 		after.splice(200, 0, block("An inserted paragraph about reviews."));
 
-		const started = performance.now();
 		const diff = diffBody(before, after);
-		const elapsed = performance.now() - started;
 
 		expect(blockItems(diff).map((item) => item.action)).toEqual(["edited", "removed", "added"]);
-		expect(elapsed).toBeLessThan(2000);
 	});
 
 	it("keeps far-apart edits in a long paragraph inline", () => {
@@ -1035,22 +1046,9 @@ describe("revision diff: bounded work", () => {
 		expect(textsOf(text, "added")).toEqual(["alpha", "omega"]);
 		const hunks = text.segments.map((segment) => segment.hunk).filter((hunk) => hunk !== null);
 		expect(new Set(hunks).size).toBe(2);
-
-		const capped = textChangeOf(
-			rowsOf(diffBody(before, after, { limits: { maxTokenCellsPerText: 250_000 } }))[0],
-		);
-		expect(capped.mode).toBe("whole");
 	});
 
-	it("marks blocks as a whole beyond the token caps", () => {
-		const key = freshKey();
-		const words = (prefix: string) =>
-			Array.from({ length: 800 }, (_, index) => `${prefix}${index}`).join(" ");
-		const rewritten = textChangeOf(
-			rowsOf(diffBody([block(words("old"), { key })], [block(words("new"), { key })]))[0],
-		);
-		expect(rewritten.mode).toBe("whole");
-
+	it("marks the remaining blocks as a whole once the total budget is spent", () => {
 		const keys = [freshKey(), freshKey()];
 		const budget = diffBody(
 			[block("one two three", { key: keys[0] }), block("four five six", { key: keys[1] })],

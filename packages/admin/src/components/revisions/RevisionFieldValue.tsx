@@ -4,11 +4,12 @@ import { useLingui } from "@lingui/react/macro";
 import * as React from "react";
 
 import { formatFileSize, getFileIcon, getMediaObjectPosition } from "../../lib/media-utils.js";
+import { isRecord } from "../../lib/revision-diff/normalize.js";
 import type { ChangeStatus, FieldDiff } from "../../lib/revision-diff/types.js";
 import { cn, formatDate } from "../../lib/utils.js";
 import type { FieldDescriptor } from "../ContentEditor";
 import { type ImageFieldValue, mediaDisplayUrl } from "../ImageFieldRenderer.js";
-import { isRecord, markAttributes } from "./revision-blocks.js";
+import { markAttributes } from "./revision-blocks.js";
 import { ChangePrefix, DiffText, EmptyValue, visibleText } from "./RevisionSegments.js";
 
 type TextFieldDiff = Extract<FieldDiff, { type: "text" }>;

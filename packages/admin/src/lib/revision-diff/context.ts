@@ -1,6 +1,6 @@
 import type { DiffLimits, DiffOptions } from "./types.js";
 
-export const DEFAULT_LIMITS: DiffLimits = {
+const DEFAULT_LIMITS: DiffLimits = {
 	maxTokenCellsPerText: 1_000_000,
 	maxTokenCellsTotal: 5_000_000,
 	maxBlockLcsCells: 250_000,

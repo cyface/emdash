@@ -8,7 +8,8 @@ export interface Token {
 
 export type Tokenizer = (text: string) => Token[];
 
-const CODE_TOKEN = /\s+|[\p{L}\p{N}_$]+|[^\s\p{L}\p{N}_$]/gu;
+// Combining marks stay with the character they modify.
+const CODE_TOKEN = /\s+|[\p{L}\p{N}\p{M}_$]+|[^\s\p{L}\p{N}_$]\p{M}*/gu;
 const IDENTIFIER_START = /^[\p{L}\p{N}_$]/u;
 
 const segmenters = new Map<string, Intl.Segmenter>();

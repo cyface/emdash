@@ -12,6 +12,7 @@ import {
 import * as React from "react";
 
 import { getMediaObjectPosition } from "../../lib/media-utils.js";
+import { isRecord } from "../../lib/revision-diff/normalize.js";
 import type {
 	BlockRow,
 	CodeBlock,
@@ -25,7 +26,6 @@ import {
 	documentItems,
 	galleryView,
 	imageLayout,
-	isRecord,
 	type ListItemNode,
 	type ListNode,
 	markAttributes,

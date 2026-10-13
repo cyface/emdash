@@ -45,9 +45,7 @@ function block(
 		field: body,
 		action,
 		noun,
-		blockType: noun,
 		snippet,
-		moved: false,
 		target: "b-content-0",
 	};
 }
@@ -68,8 +66,8 @@ const everyItem: ChangeItem[] = [
 	{ kind: "toggle", field: featured, on: true, target: "f-featured" },
 	{ kind: "toggle", field: featured, on: false, target: "f-featured" },
 	{ kind: "field", field: { slug: "category", label: "Category" }, target: "f-category" },
-	{ kind: "slug", before: "old", after: "new-post" },
-	{ kind: "slug", before: "old", after: null },
+	{ kind: "slug", after: "new-post" },
+	{ kind: "slug", after: null },
 	...blockItems,
 	...BLOCK_ACTIONS.map((action) =>
 		block("paragraph", action, { text: "Most teams plan posts in", truncated: true }),
@@ -134,10 +132,10 @@ describe("changeLabel", () => {
 	});
 
 	it("quotes the new slug, or says it was removed", () => {
-		expect(changeLabel(i18n, { kind: "slug", before: "old", after: "new-post" })).toBe(
+		expect(changeLabel(i18n, { kind: "slug", after: "new-post" })).toBe(
 			`Changed the slug to “${isolate("new-post")}”`,
 		);
-		expect(changeLabel(i18n, { kind: "slug", before: "old", after: "" })).toBe("Removed the slug");
+		expect(changeLabel(i18n, { kind: "slug", after: "" })).toBe("Removed the slug");
 	});
 
 	it("dates a restored version when it is loaded", () => {

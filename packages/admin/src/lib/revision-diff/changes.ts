@@ -1,6 +1,7 @@
 import { blockNoun } from "./normalize.js";
 import { wordSegmenter } from "./tokens.js";
 import type {
+	BlockChange,
 	BlockRow,
 	ChangeItem,
 	FieldDiff,
@@ -16,6 +17,10 @@ const WHITESPACE = /\s/u;
 const EDGE_QUOTES = /^[\s"'“”‘’„‚«»‹›「」『』〝〞〟＂＇]+|[\s"'“”‘’„‚«»‹›「」『』〝〞〟＂＇]+$/gu;
 // Closing brackets (Pe) stay, so a truncated "(see below)" keeps its parenthesis.
 const TRAILING_PUNCTUATION = /[\s\p{Po}\p{Pd}\p{Ps}\p{Pi}\p{Pf}\p{Pc}]+$/u;
+
+// Scripts written without spaces between words, which get a character budget instead of words.
+const UNSPACED_SCRIPT =
+	/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
 
 const MAX_SPACED_WORDS = 5;
 const MAX_SPACED_LENGTH = 40;
@@ -58,7 +63,7 @@ export function describeChanges(
 		}
 	}
 	if (slug && slug.status !== "unchanged") {
-		items.push({ kind: "slug", before: slug.before, after: slug.after });
+		items.push({ kind: "slug", after: slug.after });
 	}
 	if (options.restoredFrom) items.unshift({ kind: "restored", revisionId: options.restoredFrom });
 	return items.length > 0 ? items : [{ kind: "noChanges" }];
@@ -68,37 +73,40 @@ function blockItem(field: FieldRef, row: BlockRow, locale: string | undefined): 
 	const target = row.targetId;
 	switch (row.status) {
 		case "unchanged":
-			return row.moved ? blockEntry(field, row.block, "moved", true, target, locale) : null;
+			return row.moved ? blockEntry(field, row.block, "moved", target, locale) : null;
 		case "added":
 		case "removed":
 			if (row.block.kind === "text" && !row.block.text.trim()) return null;
 			if (row.block.kind === "image") return { kind: "image", field, action: row.status, target };
-			return blockEntry(field, row.block, row.status, false, target, locale);
+			return blockEntry(field, row.block, row.status, target, locale);
 		case "changed": {
 			const { change } = row;
 			if (change.kind === "image") {
-				const action = change.assetChanged
-					? "replaced"
-					: change.captionChanged
-						? "captionEdited"
-						: change.altChanged
-							? "altEdited"
-							: "changed";
-				return { kind: "image", field, action, target };
+				return { kind: "image", field, action: imageAction(change), target };
 			}
 			const action = change.kind === "text" && !change.text.textChanged ? "restyled" : "edited";
-			const item = blockEntry(field, row.block, action, row.moved, target, locale);
+			const item = blockEntry(field, row.block, action, target, locale);
 			// A block whose text was cleared is still named by what it used to say.
 			return item.snippet ? item : { ...item, snippet: snippetOf(row.previous, locale) };
 		}
 	}
 }
 
+/** Names the one thing that changed about an image, or calls it changed when several did. */
+function imageAction(
+	change: Extract<BlockChange, { kind: "image" }>,
+): Extract<ChangeItem, { kind: "image" }>["action"] {
+	if (change.assetChanged) return "replaced";
+	const { captionChanged, altChanged, otherChanged } = change;
+	if (captionChanged && !altChanged && !otherChanged) return "captionEdited";
+	if (altChanged && !captionChanged && !otherChanged) return "altEdited";
+	return "changed";
+}
+
 function blockEntry(
 	field: FieldRef,
 	block: NormalizedBlock,
 	action: "added" | "removed" | "edited" | "restyled" | "moved",
-	moved: boolean,
 	target: string,
 	locale: string | undefined,
 ): Extract<ChangeItem, { kind: "block" }> {
@@ -107,9 +115,7 @@ function blockEntry(
 		field,
 		action,
 		noun: blockNoun(block),
-		blockType: block.type,
 		snippet: snippetOf(block, locale),
-		moved,
 		target,
 	};
 }
@@ -126,11 +132,10 @@ function snippetOf(block: NormalizedBlock, locale: string | undefined): Snippet 
 export function makeSnippet(text: string, locale?: string): Snippet | null {
 	const clean = text.replace(WHITESPACE_RUN, " ").replace(EDGE_QUOTES, "");
 	if (!clean) return null;
+	const spaced = WHITESPACE.test(clean) || !UNSPACED_SCRIPT.test(clean);
 	let snippet = "";
 	let words = 0;
-	let spaced = false;
 	for (const { segment, isWordLike } of wordSegmenter(locale).segment(clean)) {
-		if (WHITESPACE.test(segment)) spaced = true;
 		if (isWordLike && words > 0) {
 			const full = spaced
 				? words >= MAX_SPACED_WORDS || snippet.length + segment.length > MAX_SPACED_LENGTH

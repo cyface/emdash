@@ -19,7 +19,7 @@ import type {
 } from "./types.js";
 
 /** How a field's values are compared. */
-export type FieldMode =
+type FieldMode =
 	| "text"
 	| "url"
 	| "portableText"

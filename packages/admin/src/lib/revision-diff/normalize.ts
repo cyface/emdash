@@ -54,7 +54,7 @@ function toCanonicalJson(value: unknown, omitKeys: boolean): string {
 	return JSON.stringify(value) ?? "null";
 }
 
-export function stripKeysDeep(value: unknown): unknown {
+function stripKeysDeep(value: unknown): unknown {
 	if (Array.isArray(value)) return value.map((item: unknown) => stripKeysDeep(item));
 	if (!isRecord(value)) return value;
 	const stripped: UnknownRecord = {};
@@ -91,7 +91,7 @@ export function normalizeBlocks(blocks: readonly unknown[]): readonly Normalized
 	return normalized;
 }
 
-export function normalizeBlock(raw: unknown): NormalizedBlock {
+function normalizeBlock(raw: unknown): NormalizedBlock {
 	if (!isRecord(raw)) return { kind: "opaque", key: null, type: "unknown", raw };
 	const key = nonEmptyString(raw._key);
 	const type = nonEmptyString(raw._type) ?? "unknown";
@@ -118,13 +118,13 @@ interface ResolvedAnnotation {
 	key: string;
 }
 
-function normalizeTextBlock(raw: UnknownRecord, key: string | null): TextBlock | null {
-	const children = raw.children;
+/** Stored spans as runs with their marks resolved, or null when a child isn't a span. */
+export function spanRuns(children: unknown, rawMarkDefs: unknown): TextRun[] | null {
 	if (!Array.isArray(children)) return null;
 
 	const markDefs = new Map<string, ResolvedAnnotation>();
-	if (Array.isArray(raw.markDefs)) {
-		for (const markDef of raw.markDefs) {
+	if (Array.isArray(rawMarkDefs)) {
+		for (const markDef of rawMarkDefs) {
 			if (!isRecord(markDef)) continue;
 			const markKey = nonEmptyString(markDef._key);
 			const markType = nonEmptyString(markDef._type);
@@ -146,6 +146,12 @@ function normalizeTextBlock(raw: UnknownRecord, key: string | null): TextBlock |
 			runs.push({ text: child.text, marks });
 		}
 	}
+	return runs;
+}
+
+function normalizeTextBlock(raw: UnknownRecord, key: string | null): TextBlock | null {
+	const runs = spanRuns(raw.children, raw.markDefs);
+	if (!runs) return null;
 
 	const listItem = nonEmptyString(raw.listItem);
 	return {

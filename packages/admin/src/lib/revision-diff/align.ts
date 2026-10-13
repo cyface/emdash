@@ -4,7 +4,7 @@ import { blockSignature } from "./normalize.js";
 import { countWords, tokenizeCode, tokenizeWords, wordBag } from "./tokens.js";
 import type { NormalizedBlock } from "./types.js";
 
-export interface Alignment {
+interface Alignment {
 	/** Old block index to the new block index it pairs with. */
 	pairs: ReadonlyMap<number, number>;
 	/** Old indices of paired blocks that changed position. */

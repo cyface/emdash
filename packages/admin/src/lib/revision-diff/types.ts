@@ -72,7 +72,6 @@ export interface TextDiff {
 	/** `whole` is the large-text fallback: segments hold the new text as `same`. */
 	mode: "inline" | "whole";
 	textChanged: boolean;
-	marksChanged: boolean;
 	segments: readonly DiffSegment[];
 }
 
@@ -126,30 +125,22 @@ export type BlockChange =
 			otherChanged: boolean;
 			caption: TextDiff;
 	  }
-	| { kind: "code"; code: TextDiff; languageChanged: boolean }
+	| { kind: "code"; code: TextDiff }
 	| { kind: "opaque" };
 
 /**
  * One rendered block of a Portable Text field, in document order. Removed blocks sit after the
- * block that preceded them. `text` holds the runs of a text block, an image's caption or a code
- * block's code, and is null for opaque blocks.
+ * block that preceded them.
  */
 export type BlockRow =
-	| {
-			status: "unchanged";
-			targetId: string;
-			block: NormalizedBlock;
-			moved: boolean;
-			text: TextDiff | null;
-	  }
-	| { status: "added"; targetId: string; block: NormalizedBlock; text: TextDiff | null }
-	| { status: "removed"; targetId: string; block: NormalizedBlock; text: TextDiff | null }
+	| { status: "unchanged"; targetId: string; block: NormalizedBlock; moved: boolean }
+	| { status: "added"; targetId: string; block: NormalizedBlock }
+	| { status: "removed"; targetId: string; block: NormalizedBlock }
 	| {
 			status: "changed";
 			targetId: string;
 			block: NormalizedBlock;
 			previous: NormalizedBlock;
-			moved: boolean;
 			change: BlockChange;
 	  };
 
@@ -203,15 +194,13 @@ export type ChangeItem =
 	| { kind: "text"; field: FieldRef; change: "added" | "removed" | "edited"; target: string }
 	| { kind: "toggle"; field: FieldRef; on: boolean; target: string }
 	| { kind: "field"; field: FieldRef; target: string }
-	| { kind: "slug"; before: string | null; after: string | null }
+	| { kind: "slug"; after: string | null }
 	| {
 			kind: "block";
 			field: FieldRef;
 			action: "added" | "removed" | "edited" | "restyled" | "moved";
 			noun: BlockNoun;
-			blockType: string;
 			snippet: Snippet | null;
-			moved: boolean;
 			target: string;
 	  }
 	| {
