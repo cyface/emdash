@@ -1,7 +1,7 @@
 ---
 title: Readable revision history
 type: feature-plan
-status: accepted
+status: implemented
 authors:
   - Noah Pham (@khoinguyenpham04)
 discussion: null
