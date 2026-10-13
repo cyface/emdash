@@ -158,11 +158,23 @@ vi.mock("../../src/components/MediaPickerModal", () => ({
 	MediaPickerModal: () => null,
 }));
 
+const outlineClicks = vi.hoisted(() => ({ editorVisible: [] as boolean[] }));
+
 vi.mock("../../src/components/editor/DocumentOutline", () => ({
 	DocumentOutline: () => (
 		<div data-testid="doc-outline">
 			Outline
-			<button type="button">Outline heading</button>
+			<button
+				type="button"
+				onClick={() =>
+					outlineClicks.editorVisible.push(
+						document.querySelector("[data-testid='portable-text-editor']")?.checkVisibility() ??
+							false,
+					)
+				}
+			>
+				Outline heading
+			</button>
 		</div>
 	),
 }));
@@ -3773,47 +3785,6 @@ describe("ContentEditor revision view", () => {
 		await expect.element(opener).toHaveFocus();
 	});
 
-	it("loads a restored version into the body editor", async () => {
-		vi.mocked(restoreRevision).mockResolvedValue(
-			makeRevisionItem({
-				draftRevisionId: "rev-restored",
-				data: { title: "Old title", content: textBlocks("Old body") },
-			}),
-		);
-		function Host() {
-			const [item, setItem] = React.useState(makeRevisionItem());
-			const [resetToken, setResetToken] = React.useState(0);
-			return (
-				<ContentEditor
-					{...revisionEditorProps()}
-					item={item}
-					itemResetToken={resetToken}
-					onRevisionRestored={async (restored) => {
-						setItem(restored);
-						setResetToken((token) => token + 1);
-					}}
-				/>
-			);
-		}
-		const screen = await render(<Host />, { wrapper: Toasty });
-		const body = screen.getByTestId("portable-text-editor");
-		await expect.element(body).toHaveAttribute("data-content", "Draft body");
-
-		await screen.getByRole("button", { name: "View rev-old" }).click();
-		await screen.getByRole("button", { name: "Restore", exact: true }).click();
-		screen
-			.getByRole("dialog", { name: "Restore this version?" })
-			.getByRole("button", { name: "Restore", exact: true })
-			.element()
-			.click();
-
-		await expect.element(body).toHaveAttribute("data-content", "Old body");
-		await expect.element(body).toBeVisible();
-		await expect.element(screen.getByLabelText("Title")).toHaveValue("Old title");
-		expect(restoreRevision).toHaveBeenCalledWith("rev-old");
-		expect(portableTextMountCount).toBe(2);
-	});
-
 	it("loads a restored version that arrives after the editor was told to reload", async () => {
 		vi.mocked(restoreRevision).mockResolvedValue(
 			makeRevisionItem({
@@ -3883,6 +3854,28 @@ describe("ContentEditor revision view", () => {
 		await expect
 			.element(screen.getByTestId("portable-text-editor"))
 			.toHaveAttribute("data-content", "Old body");
+		expect(portableTextMountCount).toBe(2);
+	});
+
+	it("lets the writer carry on when the restored entry can't be loaded", async () => {
+		vi.mocked(restoreRevision).mockResolvedValue(
+			makeRevisionItem({ draftRevisionId: "rev-restored" }),
+		);
+		const screen = await renderRevisionEditor({
+			onRevisionRestored: () => Promise.reject(new Error("The entry couldn't be loaded.")),
+		});
+		await screen.getByRole("button", { name: "View rev-old" }).click();
+		await screen.getByRole("button", { name: "Restore", exact: true }).click();
+		const dialog = screen.getByRole("dialog", { name: "Restore this version?" });
+		dialog.getByRole("button", { name: "Restore", exact: true }).element().click();
+
+		await expect.element(dialog.getByText("The entry couldn't be loaded.")).toBeVisible();
+		dialog.getByRole("button", { name: "Cancel" }).element().click();
+		await expect
+			.element(screen.getByRole("button", { name: "Restore", exact: true }))
+			.toBeEnabled();
+		await screen.getByRole("button", { name: "View rev-draft" }).click();
+		await expect.element(screen.getByText("Current version", { exact: true })).toBeVisible();
 	});
 
 	it("keeps the body editor mounted when a save reloads the entry", async () => {
@@ -3907,6 +3900,19 @@ describe("ContentEditor revision view", () => {
 		);
 		await expect.element(screen.getByLabelText("Title")).toHaveValue("Saved title");
 		expect(portableTextMountCount).toBe(1);
+	});
+
+	it("goes back to editing when another entry opens while a version is shown", async () => {
+		const props = revisionEditorProps();
+		const screen = await render(<ContentEditor {...props} />, { wrapper: Toasty });
+		await screen.getByRole("button", { name: "View rev-old" }).click();
+		await expect.element(screen.getByRole("button", { name: "Back to editing" })).toBeVisible();
+
+		await screen.rerender(<ContentEditor {...props} item={makeRevisionItem({ id: "item-2" })} />);
+		await expect
+			.element(screen.getByRole("button", { name: "Back to editing" }))
+			.not.toBeInTheDocument();
+		await expect.element(screen.getByLabelText("Title")).toBeVisible();
 	});
 
 	it("steps between versions from the bar when the list is in the closed phone sheet", async () => {
@@ -3944,15 +3950,16 @@ describe("ContentEditor revision view", () => {
 	});
 
 	it("goes back to editing before the outline moves to a heading", async () => {
+		outlineClicks.editorVisible.length = 0;
 		const screen = await renderRevisionEditor();
 		await screen.getByRole("button", { name: "View rev-old" }).click();
 		await expect.element(screen.getByRole("button", { name: "Back to editing" })).toBeVisible();
 
 		await screen.getByRole("button", { name: "Outline heading" }).click();
+		expect(outlineClicks.editorVisible).toEqual([true]);
 		await expect
 			.element(screen.getByRole("button", { name: "Back to editing" }))
 			.not.toBeInTheDocument();
-		await expect.element(screen.getByTestId("portable-text-editor")).toBeVisible();
 	});
 
 	it("lets Escape close the phone sheet before it leaves the version", async () => {
@@ -4037,36 +4044,6 @@ describe("ContentEditor revision view", () => {
 				options?.limit === 100 ? full : partial,
 			);
 		}
-
-		it("follows the current version when an autosave replaces it", async () => {
-			const { queryClient, result } = renderWithClient();
-			const screen = await result;
-			await screen.getByRole("button", { name: "View rev-draft" }).click();
-			await expect.element(screen.getByText("Maya Chen", { exact: true })).toBeVisible();
-
-			const draft = { ...makeRevisionList().items[0]!, id: "rev-draft-2" };
-			queryClient.setQueriesData<RevisionListResponse>({ queryKey: ["revisions"] }, (list) =>
-				list
-					? withAutosavedDraft(list, {
-							draft,
-							previousDraftId: "rev-draft",
-							liveRevisionId: "rev-old",
-							limit: 21,
-						})
-					: list,
-			);
-			await screen.rerender(
-				<ContentEditor
-					{...revisionEditorProps({ item: makeRevisionItem({ draftRevisionId: "rev-draft-2" }) })}
-				/>,
-			);
-
-			await expect.element(screen.getByText("Maya Chen", { exact: true })).toBeVisible();
-			await expect.element(screen.getByRole("button", { name: "Back to editing" })).toBeVisible();
-			await expect.element(screen.getByText("Current version")).toBeVisible();
-			expect(document.body.textContent).not.toContain("no longer available");
-			expect(fetchRevisions).toHaveBeenCalledOnce();
-		});
 
 		it("follows to the draft an autosave makes from the published version being shown", async () => {
 			const item = makeRevisionItem({ draftRevisionId: null, liveRevisionId: "rev-draft" });

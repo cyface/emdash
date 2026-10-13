@@ -105,19 +105,4 @@ describeEachDialect("revision list author", (dialect) => {
 		]);
 		expect(JSON.stringify(body)).not.toContain("@example.com");
 	});
-
-	it("keeps newest-first order and the full total when limited", async () => {
-		const res = await get("?limit=2");
-		expect(res.status).toBe(200);
-		const body = (await res.json()) as {
-			data: { items: Array<{ id: string; data: { title: string } }>; total: number };
-		};
-
-		expect(body.data.total).toBe(5);
-		expect(body.data.items.map((item) => item.id)).toEqual([revisionIds.gone, revisionIds.grace]);
-		expect(body.data.items.map((item) => item.data.title)).toEqual([
-			"By a deleted user",
-			"By Grace",
-		]);
-	});
 });

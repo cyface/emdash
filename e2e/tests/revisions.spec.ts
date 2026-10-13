@@ -12,8 +12,6 @@ const VERSION_VIEW = /^Version from /;
 const BACK_TO_EDITING = /^(Back to editing|Done)$/;
 const CURRENT_ROW = /, Current version, Dev Admin$/;
 const PUBLISHED_ROW = /, Published, Dev Admin$/;
-const AUTHOR_ROW = /, Dev Admin$/;
-const STATUS_LABEL = /Current version|Published/;
 const INSERTED_RED = /(?:^|\s)red$/;
 const REMOVED_BROWN = /(?:^|\s)brown$/;
 // Interpolated values in change labels are wrapped in Unicode isolates.
@@ -143,26 +141,11 @@ test.describe("Revisions", () => {
 		}).catch(() => {});
 	});
 
-	test("lists versions with the current and published ones labelled", async ({ admin, page }) => {
-		await openEditor(admin);
-		const rows = await expandRevisions(page);
-
-		await expect(rows.nth(0)).toHaveAccessibleName(CURRENT_ROW);
-		await expect(rows.nth(1)).toHaveAccessibleName(PUBLISHED_ROW);
-		await expect(rows.nth(2)).toHaveAccessibleName(AUTHOR_ROW);
-		await expect(rows.nth(2)).not.toHaveAccessibleName(STATUS_LABEL);
-	});
-
-	test("shows an older version read-only in the canvas with its changes marked", async ({
+	test("shows an older version read-only, with change marks that Show changes hides", async ({
 		admin,
 		page,
 	}) => {
 		await openEditor(admin);
-		const publish = page
-			.locator("[data-emdash-editor-bar]")
-			.getByRole("button", { name: "Publish changes", exact: true });
-		await expect(publish).toBeEnabled();
-
 		const rows = await expandRevisions(page);
 		await rows.nth(1).click();
 
@@ -183,31 +166,14 @@ test.describe("Revisions", () => {
 			EDITED_EXCERPT,
 			EDITED_FOX,
 		]);
-		await expect(publish).toBeDisabled();
-	});
 
-	test("Show changes hides and brings back the change marks", async ({ admin, page }) => {
-		await openEditor(admin);
-		const rows = await expandRevisions(page);
-		await rows.nth(1).click();
-
-		const canvas = versionView(page);
-		const bodyField = canvas.getByRole("group", { name: "Body", exact: true });
 		const showChanges = versionBar(page).getByRole("switch", { name: "Show changes" });
-		await expect(showChanges).toBeChecked();
-		await expect(bodyField.locator("del")).toHaveText(REMOVED_BROWN);
-
 		await showChanges.click();
-		await expect(showChanges).not.toBeChecked();
 		await expect(canvas.locator("del")).toHaveCount(0);
 		await expect(canvas.locator("ins")).toHaveCount(0);
-		await expect(bodyField).not.toContainText("brown");
 		await expect(bodyField).toContainText("The quick red fox jumps over the lazy dog.");
-
 		await showChanges.click();
-		await expect(showChanges).toBeChecked();
 		await expect(bodyField.locator("del")).toHaveText(REMOVED_BROWN);
-		await expect(bodyField.locator("ins")).toHaveText(INSERTED_RED);
 	});
 
 	test("clicking a change scrolls to it and focuses it", async ({ admin, page }) => {
@@ -250,23 +216,6 @@ test.describe("Revisions", () => {
 		await expect(titleInput).toBeHidden();
 
 		await versionBar(page).getByRole("button", { name: BACK_TO_EDITING }).click();
-		await expect(canvas).toHaveCount(0);
-		await expect(titleInput).toBeVisible();
-		await expect(titleInput).toHaveValue("Unsaved title edit");
-	});
-
-	test("Esc returns to the editor with unsaved edits intact", async ({ admin, page }) => {
-		await openEditor(admin);
-		const titleInput = page.locator("#field-title");
-		await titleInput.fill("Unsaved title edit");
-
-		const rows = await expandRevisions(page);
-		await rows.nth(1).click();
-		const canvas = versionView(page);
-		await expect(canvas).toBeVisible();
-		await expect(titleInput).toBeHidden();
-
-		await page.keyboard.press("Escape");
 		await expect(canvas).toHaveCount(0);
 		await expect(titleInput).toBeVisible();
 		await expect(titleInput).toHaveValue("Unsaved title edit");

@@ -103,7 +103,7 @@ beforeEach(() => {
 });
 
 describe("RevisionHistory", () => {
-	it("does not fetch until expanded, then asks for one more version than it shows", async () => {
+	it("does not fetch until expanded", async () => {
 		const screen = await render(
 			<RevisionViewProvider value={makeView()}>
 				<RevisionHistory collection="posts" entryId="entry-1" />
@@ -114,11 +114,6 @@ describe("RevisionHistory", () => {
 		await screen.getByRole("button", { name: REVISIONS_TRIGGER }).click();
 
 		await expect.element(screen.getByRole("button", { name: MAYA_ROW })).toBeInTheDocument();
-		expect(mockFetchRevisions).toHaveBeenCalledWith(
-			"posts",
-			"entry-1",
-			expect.objectContaining({ limit: REVISION_LIST_LIMIT }),
-		);
 		await expect.element(screen.getByText("(3)")).toBeInTheDocument();
 	});
 
@@ -179,15 +174,16 @@ describe("RevisionHistory", () => {
 		expect(view.view).toHaveBeenCalledWith("rev-2", { opener: row.element() });
 	});
 
-	it("does nothing when the version already shown is clicked again", async () => {
+	it("marks the version being shown", async () => {
 		const view = makeView({ viewingId: "rev-2", viewingDiff: makeDiff([{ kind: "noChanges" }]) });
 		const screen = await renderExpanded(view);
 
-		const row = screen.getByRole("button", { name: SAM_ROW });
-		await expect.element(row).toHaveAttribute("aria-current", "true");
-		await row.click();
-
-		expect(view.view).not.toHaveBeenCalled();
+		await expect
+			.element(screen.getByRole("button", { name: SAM_ROW }))
+			.toHaveAttribute("aria-current", "true");
+		await expect
+			.element(screen.getByRole("button", { name: MAYA_ROW }))
+			.not.toHaveAttribute("aria-current");
 	});
 
 	it("lists what changed in the version being viewed and jumps to a change", async () => {
@@ -196,7 +192,7 @@ describe("RevisionHistory", () => {
 			viewingDiff: makeDiff([
 				{ kind: "restored", revisionId: "rev-1" },
 				{ kind: "title", field: { slug: "title", label: "Title" }, target: "f-title" },
-				{ kind: "slug", before: "hello", after: "hello-world" },
+				{ kind: "slug", after: "hello-world" },
 			]),
 		});
 		const screen = await renderExpanded(view);

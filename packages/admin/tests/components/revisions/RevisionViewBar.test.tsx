@@ -1,28 +1,22 @@
 import { Toasty } from "@cloudflare/kumo";
 import { i18n } from "@lingui/core";
 import * as React from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import "../../../dist/styles.css";
 import { RevisionViewBar } from "../../../src/components/revisions/RevisionViewBar";
 import { render } from "../../utils/render.tsx";
 
-const DAY_MS = 24 * 60 * 60 * 1000;
+/** A Saturday, so the Wednesday before it reads as "Wednesday", the longest English weekday. */
+const NOW = new Date(2026, 9, 17, 12);
 
-/** A Wednesday at 10:02 PM within the last week, so the bar reads "Wednesday, 10:02 PM". */
 function lastWednesdayEvening(): string {
-	const date = new Date();
-	date.setHours(22, 2, 0, 0);
-	while (date.getDay() !== 3 || Date.now() - date.getTime() < 2 * DAY_MS) {
-		date.setDate(date.getDate() - 1);
-	}
-	return date.toISOString();
+	return new Date(2026, 9, 14, 22, 2).toISOString();
 }
 
 /** A date in an earlier year, which the bar spells out in full. */
 function lastYearEvening(): string {
-	const date = new Date(new Date().getFullYear() - 1, 8, 30, 22, 2);
-	return date.toISOString();
+	return new Date(2025, 8, 30, 22, 2).toISOString();
 }
 
 function BarAt({ width, createdAt }: { width: number; createdAt: string }) {
@@ -101,6 +95,14 @@ function layoutOf(screen: BarScreen, exitLabel: string) {
 }
 
 describe("RevisionViewBar layout", () => {
+	beforeEach(() => {
+		vi.setSystemTime(NOW);
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
 	it("keeps one row with the full label when there is just room for it", async () => {
 		const createdAt = lastWednesdayEvening();
 		const screen = await renderBar(2000, createdAt);

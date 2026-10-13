@@ -196,26 +196,18 @@ function tagNames(element: Element): string[] {
 }
 
 describe("RevisionViewCanvas", () => {
-	it("strikes removed words and highlights added ones, with spoken prefixes", async () => {
+	it("strikes removed words and highlights added ones as a spaced pair, with spoken prefixes", async () => {
 		const screen = await renderCanvas(editDiff);
-		const paragraph = screen.container.querySelector("#revision-b-content-1")!;
-		const del = paragraph.querySelector("del")!;
-		const ins = paragraph.querySelector("ins")!;
+		const pair = screen.container.querySelector("#revision-b-content-1 [data-revision-pair]")!;
+		const del = pair.querySelector("del")!;
+		const ins = pair.querySelector("ins")!;
 
+		expect(tagNames(pair)).toEqual(["DEL", "INS"]);
 		expect(del.textContent).toBe("Removed: content");
 		expect(ins.textContent).toBe("Added: posts");
 		expect(del.querySelector(".sr-only")?.textContent).toBe("Removed: ");
 		expect(ins.querySelector(".sr-only")?.textContent).toBe("Added: ");
-	});
-
-	it("keeps a replacement together with a visual gap rather than a space", async () => {
-		const screen = await renderCanvas(editDiff);
-		const pair = screen.container.querySelector("#revision-b-content-1 [data-revision-pair]")!;
-
-		expect(tagNames(pair)).toEqual(["DEL", "INS"]);
-		expect(pair.textContent).toBe("Removed: contentAdded: posts");
-		const gap = getComputedStyle(pair.querySelector("ins")!).marginInlineStart;
-		expect(Number.parseFloat(gap)).toBeGreaterThan(0);
+		expect(Number.parseFloat(getComputedStyle(ins).marginInlineStart)).toBeGreaterThan(0);
 	});
 
 	it("marks whole removed and added blocks", async () => {
