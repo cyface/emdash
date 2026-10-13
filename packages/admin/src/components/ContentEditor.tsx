@@ -1709,9 +1709,12 @@ export function ContentEditor({
 					<div
 						ref={canvasRef}
 						data-emdash-editor-canvas=""
-						// A stable gutter keeps the page from sliding sideways when a shorter version
-						// or edit takes the scrollbar away.
-						className="min-w-0 flex-1 overflow-y-auto [scrollbar-gutter:stable] [--emdash-editor-sticky-top:0px]"
+						className={cn(
+							"min-w-0 flex-1 overflow-y-auto [--emdash-editor-sticky-top:0px]",
+							// Keeps the page from sliding sideways when a shorter version takes the
+							// scrollbar away.
+							isViewing && "[scrollbar-gutter:stable]",
+						)}
 					>
 						{!pinEditorBar && editorBar}
 						<div
