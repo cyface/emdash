@@ -63,6 +63,8 @@ export function RevisionRestoreDialog({
 		mutationFn: (revisionId: string) => restoreRevision(revisionId),
 		onSuccess: async (restoredItem) => {
 			onRestoreStart(restoredItem);
+			void queryClient.invalidateQueries({ queryKey: ["content", collection, entryId] });
+			void queryClient.invalidateQueries({ queryKey: ["revisions", collection, entryId] });
 			if (onRevisionRestored) {
 				try {
 					await onRevisionRestored(restoredItem);
@@ -71,8 +73,6 @@ export function RevisionRestoreDialog({
 					throw error;
 				}
 			} else {
-				void queryClient.invalidateQueries({ queryKey: ["content", collection, entryId] });
-				void queryClient.invalidateQueries({ queryKey: ["revisions", collection, entryId] });
 				onRestoreSettled();
 			}
 			onClose();

@@ -7,4 +7,4 @@ Adds readable revision history to the content editor. Selecting a version in the
 
 The revisions list API (`GET /_emdash/api/content/{collection}/{id}/revisions`) and the MCP `revision_list` tool include each revision's `author` as `{ id, name }`, or `null` when no author was recorded or the account no longer exists, so editors without access to user management can see who saved each version.
 
-Hosts that render `ContentEditor` with `onRevisionRestored` now need to reload `item` from that callback: the restored version stays open until `item` carries the restored draft. The callback can return a promise, and if it rejects, the restore dialog shows the error.
+`ContentEditor`'s `onRevisionRestored` callback can now return a promise. The restore stays pending until it settles, and the restore dialog shows the error if it rejects. When a host passes this callback, the restored version stays open until `item` carries the restored draft. The editor still refreshes the entry's `content` and `revisions` queries, so a host that reads `item` from the entry's `content` query needs no change. Other hosts should reload `item` from the callback.

@@ -1,6 +1,6 @@
 import { Toasty } from "@cloudflare/kumo";
 import { i18n } from "@lingui/core";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import * as React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { page, userEvent, type Locator } from "vitest/browser";
@@ -3937,6 +3937,47 @@ describe("ContentEditor revision view", () => {
 			.element(screen.getByTestId("portable-text-editor"))
 			.toHaveAttribute("data-content", "Old body");
 		expect(portableTextMountCount).toBe(2);
+	});
+
+	it("loads the restored version for a host that only listens for the restore", async () => {
+		const restored = makeRevisionItem({
+			draftRevisionId: "rev-restored",
+			data: { title: "Old title", content: textBlocks("Old body") },
+		});
+		let stored = makeRevisionItem();
+		vi.mocked(restoreRevision).mockImplementation(async () => {
+			stored = restored;
+			return restored;
+		});
+		const onRevisionRestored = vi.fn();
+		function Host() {
+			const { data } = useQuery({
+				queryKey: ["content", "posts", stored.id],
+				queryFn: async () => stored,
+			});
+			if (!data) return null;
+			return (
+				<ContentEditor
+					{...revisionEditorProps()}
+					item={data}
+					onRevisionRestored={onRevisionRestored}
+				/>
+			);
+		}
+		const screen = await render(<Host />, { wrapper: Toasty });
+		await screen.getByRole("button", { name: "View rev-old" }).click();
+		await screen.getByRole("button", { name: "Restore", exact: true }).click();
+		screen
+			.getByRole("dialog", { name: "Restore this version?" })
+			.getByRole("button", { name: "Restore", exact: true })
+			.element()
+			.click();
+
+		await expect.element(screen.getByLabelText("Title")).toHaveValue("Old title");
+		await expect
+			.element(screen.getByRole("button", { name: "Back to editing" }))
+			.not.toBeInTheDocument();
+		expect(onRevisionRestored).toHaveBeenCalledWith(restored);
 	});
 
 	it("lets the writer carry on when the restored entry can't be loaded", async () => {

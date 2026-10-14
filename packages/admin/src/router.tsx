@@ -305,7 +305,7 @@ function patchAutosaveQueries(
 			data: nextData,
 			authorId: me?.id ?? savedItem.authorId,
 			createdAt,
-			author: me ? { id: me.id, name: me.name || null } : null,
+			author: me ? { id: me.id, name: me.name?.trim() || null } : null,
 		};
 		for (const [queryKey, list] of lists) {
 			if (!list) continue;

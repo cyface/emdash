@@ -152,7 +152,12 @@ export function RevisionViewBar({
 						{isPublished && (
 							<span className="flex shrink-0 items-center gap-1.5">
 								<span aria-hidden="true">·</span>
-								<span className="sr-only">, </span>
+								<span className="sr-only">
+									{t({
+										message: ", ",
+										context: "Read aloud between a version's author and status",
+									})}
+								</span>
 								<span>{t`Published`}</span>
 							</span>
 						)}
