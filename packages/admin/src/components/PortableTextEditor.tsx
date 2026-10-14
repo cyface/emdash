@@ -1367,6 +1367,10 @@ function isTextBlock(block: PortableTextBlock): block is PortableTextTextBlock {
 	return block._type === "block";
 }
 
+function isQuoteBlock(block: PortableTextBlock): block is PortableTextTextBlock {
+	return isTextBlock(block) && !block.listItem && block.style === "blockquote";
+}
+
 /** A built-in `iframe` block. Any other belongs to a plugin and stays a plugin block. */
 function isIframeBlock(block: PortableTextBlock): block is PortableTextIframeBlock {
 	return block._type === "iframe" && isBuiltInIframeBlock(block);
@@ -1432,6 +1436,14 @@ function portableTextToProsemirror(
 			}
 
 			content.push(convertPTList(listBlocks, listType, `root:${runStart}`));
+		} else if (isQuoteBlock(block)) {
+			// Portable Text stores each paragraph of a quote as its own block.
+			const quoteBlocks: PortableTextTextBlock[] = [];
+			while (i < blocks.length && isQuoteBlock(blocks[i]!)) {
+				quoteBlocks.push(blocks[i] as PortableTextTextBlock);
+				i++;
+			}
+			content.push(convertPTQuote(quoteBlocks));
 		} else {
 			const converted = convertPTBlock(block, `root:${i}`, pluginTypes);
 			if (converted) {
@@ -1504,16 +1516,7 @@ function convertPTBlock(
 					};
 				}
 				case "blockquote":
-					return {
-						type: "blockquote",
-						attrs: attrsWithPortableTextKey(undefined, block._key),
-						content: [
-							{
-								type: "paragraph",
-								content: pmContent.length > 0 ? pmContent : undefined,
-							},
-						],
-					};
+					return convertPTQuote([block]);
 				default:
 					return {
 						type: "paragraph",
@@ -1660,6 +1663,23 @@ function convertPTBlock(
 			return convertCustomBlock(block);
 		}
 	}
+}
+
+/** One quote from consecutive quote blocks, one paragraph each. */
+function convertPTQuote(blocks: PortableTextTextBlock[]): unknown {
+	return {
+		type: "blockquote",
+		attrs: attrsWithPortableTextKey(undefined, blocks[0]!._key),
+		content: blocks.map((block, index) => {
+			const content = convertPTSpans(block.children, block.markDefs ?? []);
+			return {
+				type: "paragraph",
+				// The first paragraph is saved under the quote's key.
+				...(index > 0 ? { attrs: attrsWithPortableTextKey(undefined, block._key) } : {}),
+				content: content.length > 0 ? content : undefined,
+			};
+		}),
+	};
 }
 
 function convertCustomBlock(block: PortableTextBlock): unknown {
