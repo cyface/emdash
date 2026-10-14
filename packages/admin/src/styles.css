@@ -1326,23 +1326,26 @@ div:has(> [role="listbox"] > .emdash-compact-select-option) {
 	display: block;
 }
 
-[data-emdash-revision-view] ins {
-	border-radius: 0.25rem;
+/* Square corners keep the added text's underline straight to its ends. */
+[data-emdash-revision-view] :is(ins, del) {
 	background-color: light-dark(
 		color-mix(in oklab, var(--emdash-author) 16%, transparent),
 		color-mix(in oklab, var(--emdash-author) 34%, transparent)
 	);
-	box-shadow: inset 0 -1.5px color-mix(in oklab, var(--emdash-author) 50%, transparent);
 	padding-inline: 0.125rem;
-	color: inherit;
-	text-decoration: none;
 	-webkit-box-decoration-break: clone;
 	box-decoration-break: clone;
 }
 
-/* Half the author's colour keeps struck text above 4.5:1 on every surface, orange included. */
+[data-emdash-revision-view] ins {
+	box-shadow: inset 0 -1.5px color-mix(in oklab, var(--emdash-author) 50%, transparent);
+	color: inherit;
+	text-decoration: none;
+}
+
+/* 40% of the author's colour keeps struck text above 4.5:1 on its tint on every surface, orange included. */
 [data-emdash-revision-view] del {
-	color: color-mix(in oklab, var(--emdash-author) 50%, var(--text-color-kumo-default));
+	color: color-mix(in oklab, var(--emdash-author) 40%, var(--text-color-kumo-default));
 	text-decoration-line: line-through;
 	text-decoration-thickness: 1.5px;
 }
@@ -1351,9 +1354,12 @@ div:has(> [role="listbox"] > .emdash-compact-select-option) {
 	color: inherit;
 }
 
-/* A visual gap between the old and new text of a replacement; it isn't a space in the text. */
-[data-emdash-revision-view] [data-revision-pair] > ins {
-	margin-inline-start: 0.2em;
+/*
+ * A visual gap between the old and new text of a replacement; it isn't a space in the text.
+ * Each wrapped line repeats it, so it trails the old text rather than indenting the new.
+ */
+[data-emdash-revision-view] [data-revision-pair] > del {
+	margin-inline-end: 0.2em;
 }
 
 [data-emdash-revision-view] [data-revision-restyled] {

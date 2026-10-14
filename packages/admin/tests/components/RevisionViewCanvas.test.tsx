@@ -207,7 +207,36 @@ describe("RevisionViewCanvas", () => {
 		expect(ins.textContent).toBe("Added: posts");
 		expect(del.querySelector(".sr-only")?.textContent).toBe("Removed: ");
 		expect(ins.querySelector(".sr-only")?.textContent).toBe("Added: ");
-		expect(Number.parseFloat(getComputedStyle(ins).marginInlineStart)).toBeGreaterThan(0);
+		expect(ins.getBoundingClientRect().left).toBeGreaterThan(del.getBoundingClientRect().right);
+	});
+
+	it("starts each wrapped line of a replacement's new text at the line's edge", async () => {
+		const screen = await renderCanvas(
+			revisionDiff([
+				bodyField([
+					{
+						...editedParagraph,
+						block: textBlock("Drag to reschedule"),
+						previous: textBlock("Rescheduling"),
+						change: {
+							kind: "text",
+							styleChanged: false,
+							text: textDiff([
+								segment("Rescheduling", "removed", { hunk: 0 }),
+								segment("Drag to reschedule", "added", { hunk: 0 }),
+							]),
+						},
+					},
+				]),
+			]),
+		);
+		const block = screen.container.querySelector<HTMLElement>("#revision-b-content-1")!;
+		block.style.width = "min-content";
+		const lineStart = block.querySelector("del")!.getBoundingClientRect().left;
+		const wrapped = [...block.querySelector("ins")!.getClientRects()].slice(1);
+
+		expect(wrapped.length).toBeGreaterThan(0);
+		for (const line of wrapped) expect(line.left).toBeCloseTo(lineStart, 0);
 	});
 
 	it("marks whole removed and added blocks", async () => {
