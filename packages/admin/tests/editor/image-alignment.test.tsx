@@ -86,10 +86,10 @@ describe("Editor image alignment", () => {
 			const figcaption = host.querySelector("figcaption");
 			const imageBounds = image.getBoundingClientRect();
 
-			expect(imageBounds.top - before.getBoundingClientRect().bottom).toBeCloseTo(16, 0);
+			expect(imageBounds.top - before.getBoundingClientRect().bottom).toBeCloseTo(24, 0);
 			expect(
 				after.getBoundingClientRect().top - (figcaption ?? image).getBoundingClientRect().bottom,
-			).toBeCloseTo(16, 0);
+			).toBeCloseTo(24, 0);
 			if (caption) {
 				expect(figcaption).not.toBeNull();
 				const captionGap = figcaption!.getBoundingClientRect().top - imageBounds.bottom;
