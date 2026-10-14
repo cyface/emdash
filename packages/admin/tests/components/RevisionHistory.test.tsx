@@ -157,6 +157,36 @@ describe("RevisionHistory", () => {
 		expect(screen.getByText(/^Restored from/).elements()).toHaveLength(1);
 	});
 
+	it("doesn't repeat which version a restored copy came from in its changes", async () => {
+		mockFetchRevisions.mockResolvedValue({
+			items: [
+				makeRevision({ id: "rev-3", data: { title: "First draft" } }),
+				makeRevision({ id: "rev-2", data: { title: "Second draft" } }),
+				makeRevision({
+					id: "rev-1",
+					data: { title: "First draft" },
+					createdAt: localTimestamp(1, 10, 0),
+				}),
+			],
+			total: 3,
+		});
+		const screen = await renderExpanded(
+			makeView({
+				liveRevisionId: null,
+				viewingId: "rev-3",
+				viewingDiff: makeDiff([
+					{ kind: "restored", revisionId: "rev-1" },
+					{ kind: "title", field: { slug: "title", label: "Title" }, target: "f-title" },
+				]),
+			}),
+		);
+
+		const changes = screen.getByRole("list", { name: "Changes in this version" });
+		await expect.element(changes.getByRole("button", { name: "Changed the title" })).toBeVisible();
+		expect(changes.getByRole("listitem").elements()).toHaveLength(1);
+		expect(screen.getByText(/^Restored from/).elements()).toHaveLength(1);
+	});
+
 	it("moves focus from the version that was restored to the new current one", async () => {
 		const history = <RevisionHistory collection="posts" entryId="entry-1" reserveHeaderEnd />;
 		const screen = await renderExpanded(makeView());

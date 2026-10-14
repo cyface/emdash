@@ -1,4 +1,4 @@
-import { Button } from "@cloudflare/kumo";
+import { Badge, Button } from "@cloudflare/kumo";
 import { plural } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
 import { ArrowCounterClockwise } from "@phosphor-icons/react";
@@ -22,7 +22,10 @@ import { useRevisionViewContext, type RevisionViewContextValue } from "./revisio
 
 const VISIBLE_CHANGES = 5;
 
-const ROW_CLASS = "grid w-full gap-0.5 rounded-lg px-2.5 py-2 text-start";
+const ROW_CLASS =
+	"grid w-full grid-cols-[1rem_minmax(0,1fr)] gap-x-2 rounded-[0.625rem] p-2 text-start";
+/** The timeline runs through the middle of the dot column: the row's padding plus half of it. */
+const TIMELINE_CLASS = "absolute start-[15.25px] w-[1.5px] bg-kumo-line";
 
 const SCROLLING_OVERFLOW_REGEX = /auto|scroll|overlay/;
 
@@ -147,15 +150,17 @@ export function RevisionList({ list, loadingOlder }: RevisionListProps) {
 					<React.Fragment key={group.id}>
 						<h4
 							id={headingId}
-							className="px-2.5 pt-3.5 pb-1 text-xs leading-4 font-medium text-kumo-subtle first:pt-0"
+							className="px-3 pt-3.5 pb-1 text-xs leading-4 font-medium text-kumo-subtle first:pt-0"
 						>
 							{group.label}
 						</h4>
 						<ul aria-labelledby={headingId} className="grid grid-cols-1 gap-0.5">
-							{group.items.map((item) => (
+							{group.items.map((item, index) => (
 								<VersionRow
 									key={item.id}
 									item={item}
+									firstOfDay={index === 0}
+									lastOfDay={index === group.items.length - 1}
 									view={view}
 									color={revisionAuthorColor(colors, item)}
 									restoredFrom={sources.get(item.id) ?? null}
@@ -193,6 +198,8 @@ export function RevisionList({ list, loadingOlder }: RevisionListProps) {
 
 interface VersionRowProps {
 	item: RevisionListItem;
+	firstOfDay: boolean;
+	lastOfDay: boolean;
 	view: RevisionViewContextValue | null;
 	color: AuthorColor;
 	/** The version this one copies, when it is a restored copy. */
@@ -203,7 +210,16 @@ interface VersionRowProps {
 	onPick: (row: HTMLElement) => void;
 }
 
-function VersionRow({ item, view, color, restoredFrom, savedWhen, onPick }: VersionRowProps) {
+function VersionRow({
+	item,
+	firstOfDay,
+	lastOfDay,
+	view,
+	color,
+	restoredFrom,
+	savedWhen,
+	onPick,
+}: VersionRowProps) {
 	const { t } = useLingui();
 	const format = useRevisionFormat();
 	const date = revisionDate(item.createdAt);
@@ -228,42 +244,47 @@ function VersionRow({ item, view, color, restoredFrom, savedWhen, onPick }: Vers
 	const content = (
 		<>
 			<span className="sr-only">{restored ? t`${label}, ${restored}` : label}</span>
-			<span aria-hidden="true" className="flex min-w-0 items-baseline gap-2">
-				<time dateTime={date.toISOString()} className="shrink-0 text-base font-medium tabular-nums">
-					<bdi>{format.time(date)}</bdi>
-				</time>
-				{(isCurrent || isPublished) && (
-					<span className="truncate text-xs leading-4 text-kumo-subtle">
-						{isCurrent && t`Current version`}
-						{isCurrent && isPublished && " · "}
-						{isPublished && <span className="text-kumo-success">{t`Published`}</span>}
+			<span aria-hidden="true" className="flex h-5 items-center justify-center">
+				<span
+					data-author-color={color}
+					className={cn(
+						"shrink-0 rounded-full",
+						isCurrent
+							? "size-2.5 border-2 border-(--emdash-author)"
+							: "size-2 bg-(--emdash-author)",
+						isSelected &&
+							"outline-2 outline-offset-2 outline-[color-mix(in_oklab,var(--emdash-author)_45%,transparent)]",
+					)}
+				/>
+			</span>
+			<span aria-hidden="true" className="grid min-w-0">
+				<span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
+					<time dateTime={date.toISOString()} className="text-base font-medium tabular-nums">
+						<bdi>{format.time(date)}</bdi>
+					</time>
+					{isCurrent && <Badge variant="secondary">{t`Current version`}</Badge>}
+					{isPublished && <Badge variant="success">{t`Published`}</Badge>}
+				</span>
+				<bdi className="max-w-full justify-self-start truncate text-base text-kumo-subtle">
+					{author}
+				</bdi>
+				{restored && (
+					<span className="mt-0.5 flex min-w-0 items-center gap-1 text-xs leading-4 text-kumo-subtle">
+						<ArrowCounterClockwise className="size-3 shrink-0" />
+						<span className="truncate">{restored}</span>
 					</span>
 				)}
 			</span>
-			<span
-				aria-hidden="true"
-				className="flex min-w-0 items-center gap-2 text-base text-kumo-subtle"
-			>
-				<span
-					data-author-color={color}
-					className="size-2 shrink-0 rounded-full bg-(--emdash-author)"
-				/>
-				<bdi className="truncate">{author}</bdi>
-			</span>
-			{restored && (
-				<span
-					aria-hidden="true"
-					className="flex min-w-0 items-center gap-1 text-xs leading-4 text-kumo-subtle"
-				>
-					<ArrowCounterClockwise className="size-3 shrink-0" />
-					<span className="truncate">{restored}</span>
-				</span>
-			)}
 		</>
 	);
 
 	return (
-		<li className={cn("rounded-lg", isSelected && "bg-kumo-tint")}>
+		<li className={cn("relative rounded-[0.625rem]", isSelected && "bg-kumo-tint")}>
+			{/* The day's timeline, broken around each version's dot. */}
+			{!firstOfDay && <span aria-hidden="true" className={cn(TIMELINE_CLASS, "top-0 h-2.5")} />}
+			{!lastOfDay && (
+				<span aria-hidden="true" className={cn(TIMELINE_CLASS, "top-[26px] -bottom-0.5")} />
+			)}
 			{view ? (
 				<button
 					type="button"
@@ -286,9 +307,12 @@ function VersionRow({ item, view, color, restoredFrom, savedWhen, onPick }: Vers
 			) : (
 				<div className={ROW_CLASS}>{content}</div>
 			)}
-			{view && isSelected && view.viewingDiff && view.viewingDiff.changes.length > 0 && (
+			{view && isSelected && view.viewingDiff && (
 				<ChangeList
-					changes={view.viewingDiff.changes}
+					// The row already says which version this one restored.
+					changes={view.viewingDiff.changes.filter(
+						(change) => !(restored && change.kind === "restored"),
+					)}
 					savedWhen={savedWhen}
 					goToChange={view.goToChange}
 				/>
@@ -317,12 +341,10 @@ function ChangeList({ changes, savedWhen, goToChange }: ChangeListProps) {
 
 	const shown = showAll ? changes : changes.slice(0, VISIBLE_CHANGES);
 	const hiddenCount = changes.length - shown.length;
+	if (changes.length === 0) return null;
 
 	return (
-		<ul
-			aria-label={t`Changes in this version`}
-			className="mb-2 ms-3.5 me-2 grid grid-cols-1 border-s-[1.5px] border-kumo-line ps-1.5"
-		>
+		<ul aria-label={t`Changes in this version`} className="ms-6 me-2 mb-2 grid grid-cols-1">
 			{shown.map((change, index) => {
 				const text = changeLabel(i18n, change, { restoredWhen: savedWhen });
 				const ref =

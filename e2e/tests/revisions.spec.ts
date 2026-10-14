@@ -246,7 +246,8 @@ test.describe("Revisions", () => {
 
 		await rows.nth(0).click();
 		await expect(canvas).toBeVisible();
-		await expect(changeList(page).getByRole("listitem").first()).toHaveText(RESTORED_FROM);
+		await expect(changeList(page).getByRole("listitem").first()).toBeVisible();
+		await expect(changeList(page).getByText(RESTORED_FROM)).toHaveCount(0);
 		const restore = versionBar(page).getByRole("button", { name: "Restore", exact: true });
 		await expect(restore).toHaveCount(0);
 
