@@ -83,7 +83,7 @@ describe("Editor image alignment", () => {
 			});
 			const before = host.querySelector("p")!;
 			const after = host.querySelector("p:last-child")!;
-			const figcaption = host.querySelector("figcaption");
+			const figcaption = caption ? host.querySelector("figcaption") : null;
 			const imageBounds = image.getBoundingClientRect();
 
 			expect(imageBounds.top - before.getBoundingClientRect().bottom).toBeCloseTo(24, 0);
@@ -196,6 +196,8 @@ describe("Editor image alignment", () => {
 		});
 		const block = image.closest<HTMLElement>("[data-node-view-wrapper]")!;
 		const caption = block.querySelector("textarea")!;
+		caption.focus();
+		await vi.waitFor(() => expect(caption.getBoundingClientRect().width).toBeGreaterThan(1));
 		expect(block.getBoundingClientRect().width).toBeCloseTo(120, 0);
 		expect(caption.getBoundingClientRect().width).toBeCloseTo(120, 0);
 	});

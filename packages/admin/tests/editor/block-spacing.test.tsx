@@ -1,6 +1,7 @@
 import type { Editor } from "@tiptap/react";
 import * as React from "react";
 import { describe, expect, it, vi } from "vitest";
+import { page, userEvent } from "vitest/browser";
 
 import type { PortableTextEditorProps } from "../../src/components/PortableTextEditor";
 import { PortableTextEditor } from "../../src/components/PortableTextEditor";
@@ -171,4 +172,81 @@ describe.each(["document", "boxed"] as const)("Block spacing in the %s editor", 
 			0,
 		);
 	});
+});
+
+const video = () => ({
+	_type: "video",
+	_key: key(),
+	asset: { _ref: "clip", url: "/clip.mp4", provider: "external" },
+	width: 640,
+	height: 360,
+});
+
+const image = () => ({
+	_type: "image",
+	_key: key(),
+	asset: { _ref: "photo", url: "/photo.jpg", provider: "external" },
+	alt: "Photo",
+	width: 400,
+	height: 300,
+});
+
+/** Selects the media block and opens its empty caption with Add caption. */
+async function openCaption(editor: Editor, pm: HTMLElement) {
+	editor.view.focus();
+	editor.commands.setNodeSelection(editor.state.doc.child(0).nodeSize);
+	await userEvent.click(page.getByRole("button", { name: "Add caption" }));
+	const caption = pm.querySelector("figure textarea");
+	expect(document.activeElement).toBe(caption);
+}
+
+describe("Empty media captions", () => {
+	it("take no room until Add caption opens them", async () => {
+		const { editor, pm } = await renderEditor("document", [
+			textBlock("Before"),
+			video(),
+			textBlock("After"),
+		]);
+		const figure = pm.querySelector("figure")!;
+		const frame = pm.querySelector("video")!.parentElement!;
+		const frameHeight = frame.getBoundingClientRect().height;
+		expect(figure.getBoundingClientRect().height).toBeCloseTo(frameHeight, 0);
+
+		await openCaption(editor, pm);
+		expect(figure.getBoundingClientRect().height).toBeGreaterThan(frameHeight);
+
+		await userEvent.keyboard("{Escape}");
+		await vi.waitFor(() =>
+			expect(figure.getBoundingClientRect().height).toBeCloseTo(frameHeight, 0),
+		);
+	});
+
+	it.each([
+		{ name: "image", block: image },
+		{ name: "video", block: video },
+	])(
+		"keeps the text below still until a click away from an empty $name caption ends",
+		async ({ block }) => {
+			const { editor, pm } = await renderEditor("document", [
+				textBlock("Before"),
+				block(),
+				textBlock("After"),
+			]);
+			await openCaption(editor, pm);
+			const after = pm.querySelector<HTMLElement>(":scope > p:last-of-type")!;
+			const tops: number[] = [];
+			const record = () => tops.push(after.getBoundingClientRect().top);
+			const events = ["pointerdown", "pointerup", "click"];
+			for (const type of events) window.addEventListener(type, record, true);
+			try {
+				await userEvent.click(after);
+			} finally {
+				for (const type of events) window.removeEventListener(type, record, true);
+			}
+
+			expect(tops).toHaveLength(3);
+			for (const top of tops) expect(top).toBeCloseTo(tops[0]!, 0);
+			await vi.waitFor(() => expect(after.getBoundingClientRect().top).toBeLessThan(tops[0]!));
+		},
+	);
 });

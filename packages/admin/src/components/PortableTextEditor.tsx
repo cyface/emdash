@@ -77,6 +77,7 @@ import {
 	ImageSquare,
 	Rows,
 	SlidersHorizontal,
+	Subtitles,
 	TextAa,
 	Minus,
 	LinkBreak,
@@ -5447,6 +5448,7 @@ function ImageBubbleMenu({
 				alt: typeof attrs?.alt === "string" ? attrs.alt : "",
 				alignment: (attrs?.alignment as string | null | undefined) ?? null,
 				link: (attrs?.link as { href?: string } | null | undefined)?.href ?? "",
+				caption: typeof attrs?.caption === "string" ? attrs.caption : "",
 				mediaId:
 					typeof attrs?.mediaId === "string" &&
 					attrs.mediaId &&
@@ -5815,6 +5817,13 @@ function ImageBubbleMenu({
 								title={image.link ? t`Edit link` : t`Add link`}
 							>
 								<LinkIcon className="h-4 w-4" aria-hidden="true" />
+							</BubbleButton>
+							<BubbleButton
+								onClick={() => getSelectedCaption()?.focus()}
+								active={Boolean(image.caption)}
+								title={image.caption ? t`Edit caption` : t`Add caption`}
+							>
+								<Subtitles className="h-4 w-4" aria-hidden="true" />
 							</BubbleButton>
 							{canOpenSettings && (
 								<BubbleButton onClick={toggleSettings} title={t`Image settings`}>
