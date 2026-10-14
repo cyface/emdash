@@ -113,6 +113,34 @@ function focusIsLost(canvas: HTMLElement | null): boolean {
 	return !active || active === document.body || Boolean(canvas?.contains(active));
 }
 
+const SCROLL_RETRY_FRAMES = 10;
+const SCROLL_INPUT_EVENTS = ["wheel", "touchstart", "keydown"] as const;
+
+/**
+ * Scrolls the canvas to `top`, trying again over the next few frames while the page is too
+ * short to get there: field editors remounted by a restore draw some blocks a moment late.
+ * Returns a function that stops trying; scrolling by hand stops it too.
+ */
+function scrollCanvasTo(canvas: HTMLElement, top: number): () => void {
+	let frames = SCROLL_RETRY_FRAMES;
+	let frame = 0;
+	const stop = () => {
+		cancelAnimationFrame(frame);
+		for (const type of SCROLL_INPUT_EVENTS) canvas.removeEventListener(type, stop);
+	};
+	const attempt = () => {
+		canvas.scrollTop = top;
+		const tooShort = canvas.scrollHeight - canvas.clientHeight < top - 1;
+		if (tooShort && --frames > 0) frame = requestAnimationFrame(attempt);
+		else stop();
+	};
+	for (const type of SCROLL_INPUT_EVENTS) {
+		canvas.addEventListener(type, stop, { passive: true });
+	}
+	attempt();
+	return stop;
+}
+
 function restartPulse(element: HTMLElement) {
 	element.classList.remove("emdash-revision-pulse");
 	// Reading layout restarts the animation when the class goes back on.
@@ -288,7 +316,15 @@ export function useRevisionView({
 	const viewedWasCurrentRef = React.useRef(false);
 	const announceFrameRef = React.useRef(0);
 
-	React.useEffect(() => () => cancelAnimationFrame(announceFrameRef.current), []);
+	const stopScrollRef = React.useRef<(() => void) | null>(null);
+
+	React.useEffect(
+		() => () => {
+			cancelAnimationFrame(announceFrameRef.current);
+			stopScrollRef.current?.();
+		},
+		[],
+	);
 
 	const announce = React.useCallback((message: string) => {
 		cancelAnimationFrame(announceFrameRef.current);
@@ -449,9 +485,11 @@ export function useRevisionView({
 		const goal = scrollGoalRef.current;
 		if (canvas && scroll === "saved") {
 			pendingScrollRef.current = null;
-			canvas.scrollTop = savedScrollRef.current;
+			stopScrollRef.current?.();
+			stopScrollRef.current = scrollCanvasTo(canvas, savedScrollRef.current);
 		} else if (canvas && scroll === "goal" && goal && hasRevision) {
 			pendingScrollRef.current = null;
+			stopScrollRef.current?.();
 			canvas.scrollTop = goal.top;
 			goal.applied = canvas.scrollTop;
 		}

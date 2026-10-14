@@ -30,8 +30,16 @@ function revision(id: string, title: string, createdAt: string): RevisionListIte
 	};
 }
 
+/** Takes its full height a moment after mounting, as the rich text editor's blocks do. */
+function EditorPage() {
+	const [drawn, setDrawn] = React.useState(false);
+	React.useEffect(() => queueMicrotask(() => setDrawn(true)), []);
+	return <div style={{ height: drawn ? 1000 : 100 }} />;
+}
+
 function Editor() {
 	const canvasRef = React.useRef<HTMLDivElement>(null);
+	const [editorGeneration, setEditorGeneration] = React.useState(0);
 	const view = useRevisionView({
 		collection: "posts",
 		entryId: "entry-1",
@@ -43,6 +51,7 @@ function Editor() {
 		listVisible: true,
 		canvasRef,
 	});
+	const viewing = view.viewingId !== null;
 	const shown = view.revision?.id;
 	return (
 		<>
@@ -54,12 +63,37 @@ function Editor() {
 			<button type="button" onClick={view.exit}>
 				Back to editing
 			</button>
-			<output>{shown ? `Showing ${shown}` : "Editing"}</output>
+			<button
+				type="button"
+				onClick={() => {
+					view.beginRestore({ draftRevisionId: "rev-4" });
+					view.completeRestore();
+					setEditorGeneration((generation) => generation + 1);
+				}}
+			>
+				Restored
+			</button>
+			<output>{shown ? `Showing ${shown}` : viewing ? "Loading" : "Editing"}</output>
 			<div ref={canvasRef} data-testid="canvas" style={{ height: 200, overflowY: "auto" }}>
-				<div style={{ height: shown ? HEIGHTS[shown] : 1000 }} />
+				<div hidden={viewing}>
+					<EditorPage key={editorGeneration} />
+				</div>
+				{/* A version that hasn't loaded yet draws a short loader. */}
+				{viewing && <div style={{ height: shown ? HEIGHTS[shown] : 100 }} />}
 			</div>
 		</>
 	);
+}
+
+async function renderEditor() {
+	const screen = await render(<Editor />);
+	const canvas = screen.getByTestId("canvas").element();
+	await expect.poll(() => canvas.scrollHeight).toBeGreaterThanOrEqual(1000);
+	const open = async (id: string) => {
+		await screen.getByRole("button", { name: `View ${id}` }).click();
+		await expect.element(screen.getByText(`Showing ${id}`)).toBeInTheDocument();
+	};
+	return { screen, canvas, open };
 }
 
 beforeEach(() => {
@@ -76,12 +110,7 @@ beforeEach(() => {
 
 describe("useRevisionView", () => {
 	it("keeps the canvas where it was scrolled from the editor through each version", async () => {
-		const screen = await render(<Editor />);
-		const canvas = screen.getByTestId("canvas").element();
-		const open = async (id: string) => {
-			await screen.getByRole("button", { name: `View ${id}` }).click();
-			await expect.element(screen.getByText(`Showing ${id}`)).toBeInTheDocument();
-		};
+		const { screen, canvas, open } = await renderEditor();
 		canvas.scrollTop = 300;
 
 		await open("rev-2");
@@ -100,5 +129,15 @@ describe("useRevisionView", () => {
 		await screen.getByRole("button", { name: "Back to editing" }).click();
 		await expect.element(screen.getByText("Editing", { exact: true })).toBeInTheDocument();
 		expect(canvas.scrollTop).toBe(300);
+	});
+
+	it("leaves a restored version where it was scrolled once the editor has drawn", async () => {
+		const { screen, canvas, open } = await renderEditor();
+		await open("rev-2");
+		canvas.scrollTop = 500;
+
+		await screen.getByRole("button", { name: "Restored" }).click();
+		await expect.element(screen.getByText("Editing", { exact: true })).toBeInTheDocument();
+		await expect.poll(() => canvas.scrollTop).toBe(500);
 	});
 });

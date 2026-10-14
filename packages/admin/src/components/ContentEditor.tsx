@@ -623,8 +623,9 @@ export function ContentEditor({
 	const settingsButtonRef = React.useRef<HTMLButtonElement>(null);
 	const listVisible = !isBelowLg && !isDistractionFree;
 	const focusAfterRevisionView = React.useCallback(() => {
-		// Focusing a text field on a phone would open the keyboard.
-		if (isBelowLg) settingsButtonRef.current?.focus();
+		// Focusing a text field on a phone would open the keyboard. The Settings button may have
+		// scrolled away with the editor bar, and the page stays where the writer left it.
+		if (isBelowLg) settingsButtonRef.current?.focus({ preventScroll: true });
 		else portableTextEditor?.commands.focus(null, { scrollIntoView: false });
 	}, [isBelowLg, portableTextEditor]);
 	const revisionView = useRevisionView({

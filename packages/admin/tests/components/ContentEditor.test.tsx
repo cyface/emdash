@@ -3726,19 +3726,21 @@ describe("ContentEditor revision view", () => {
 		expect(canvas.element()).toBe(shown);
 	});
 
-	it("shows the next version after one that can't be shown", async () => {
+	it("shows each version on its own when one of them can't be shown", async () => {
 		const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
 		unreadableVersion = /October 1/;
 		try {
 			const screen = await renderRevisionEditor();
+			const failed = screen.getByText("This version can't be shown.");
+			await screen.getByRole("button", { name: "View rev-draft" }).click();
+			await expect.element(screen.getByRole("article", { name: /^Version from/ })).toBeVisible();
+
 			await screen.getByRole("button", { name: "View rev-old" }).click();
-			await expect.element(screen.getByText("This version can't be shown.")).toBeVisible();
+			await expect.element(failed).toBeVisible();
 
 			await screen.getByRole("button", { name: "View rev-draft" }).click();
 			await expect.element(screen.getByRole("article", { name: /^Version from/ })).toBeVisible();
-			await expect
-				.element(screen.getByText("This version can't be shown."))
-				.not.toBeInTheDocument();
+			await expect.element(failed).not.toBeInTheDocument();
 		} finally {
 			unreadableVersion = null;
 			consoleError.mockRestore();
@@ -4024,6 +4026,34 @@ describe("ContentEditor revision view", () => {
 				.toBeVisible();
 			await expect.element(screen.getByRole("button", { name: "Back to editing" })).toBeVisible();
 		} finally {
+			media.restore();
+			await page.viewport(1280, 800);
+		}
+	});
+
+	it("goes back to where the editor was scrolled on a phone", async () => {
+		await page.viewport(390, 844);
+		const media = installMatchMedia(true);
+		const tallPage = document.createElement("style");
+		tallPage.textContent = `
+			[data-emdash-editor-canvas] { height: 400px; overflow-y: auto; }
+			[data-emdash-editor-canvas] .emdash-editor-page { min-height: 3000px; }
+		`;
+		document.head.append(tallPage);
+		try {
+			const screen = await renderRevisionEditor();
+			const canvas = document.querySelector<HTMLElement>("[data-emdash-editor-canvas]")!;
+			canvas.scrollTop = 500;
+			screen.getByRole("button", { name: "Settings" }).element().click();
+			await screen.getByRole("button", { name: "View rev-old" }).click();
+			const back = screen.getByRole("button", { name: "Back to editing" });
+			await expect.element(back).toBeVisible();
+
+			back.element().click();
+			await expect.element(screen.getByRole("button", { name: "Settings" })).toHaveFocus();
+			expect(canvas.scrollTop).toBe(500);
+		} finally {
+			tallPage.remove();
 			media.restore();
 			await page.viewport(1280, 800);
 		}
