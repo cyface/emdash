@@ -1812,7 +1812,9 @@ export class EmDashRuntime {
 				return EmDashRuntime.getDatabase(deps, { appliedMigrationCount: count });
 			});
 		} catch (error) {
-			await foldedColdStartReads;
+			// Drain the folded reads without letting a secondary read failure
+			// replace the migration/init error we want to report.
+			await foldedColdStartReads?.catch(() => undefined);
 			await disposeReadDb();
 			throw error;
 		}
