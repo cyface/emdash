@@ -176,8 +176,9 @@ function foldedHydrationSelects(db: Kysely<any>, type: string, outer: string) {
 	// this is one index probe per row and matches `findByUserIds` exactly.
 	const author = sql`(SELECT ${bylineInner} FROM ${sql.ref("_emdash_bylines")} AS b LEFT JOIN ${sql.ref("media")} AS m ON m.id = b.avatar_media_id WHERE b.user_id = ${o}.author_id AND b.locale = ${o}.locale LIMIT 1)`;
 	// Both ride in one result column: D1 caps a result set at 100 columns and
-	// the entry read is budgeted to the column (#1600). SQLite's `json()`
-	// keeps each subquery's JSON text from being nested as a string.
+	// the entry read is budgeted to the column, so folding them together keeps
+	// its width unchanged. SQLite's `json()` keeps each subquery's JSON text
+	// from being nested as a string.
 	const bylines = pg
 		? sql`json_build_object('credits', ${credits}, 'author', ${author}) AS ${sql.ref("_emdash_bylines")}`
 		: sql`json_object('credits', json(${credits}), 'author', json(${author})) AS ${sql.ref("_emdash_bylines")}`;
