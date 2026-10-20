@@ -435,8 +435,9 @@ export class BylineRepository {
 					.filter((g): g is string => typeof g === "string" && g.length > 0),
 			),
 		];
-		// The two reads are independent: issue them together so a batching
-		// driver (D1 sessions) sends one round trip instead of two.
+		// The two reads are independent, so issue them together. On D1 with
+		// `coalesce` enabled they share one round trip; elsewhere they still
+		// run one after the other.
 		const [, groupByGroup] = await Promise.all([
 			loadTranslatable(),
 			this.loadGroupValuesByIds(groups),

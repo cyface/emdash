@@ -221,6 +221,58 @@ describeEachDialect("byline hydration on the fold fast path", (dialect) => {
 		for (const spy of spies) expect(spy).not.toHaveBeenCalled();
 	});
 
+	it("matches aliased locale codes in the fold the way the query path does", async () => {
+		setI18nConfig({ defaultLocale: "en", locales: ["en", "fr"], localeAliases: { "en-US": "en" } });
+		await registerCustomFields();
+		const user = await createUser("aliased@example.com");
+		// The author has a byline under the configured path and one under its
+		// code; the path wins on both paths.
+		await bylines.create({
+			displayName: "Path Byline",
+			slug: "path-byline",
+			userId: user.id,
+			locale: "en",
+			customFields: { job_title: "Writer" },
+		});
+		await bylines.create({
+			displayName: "Code Byline",
+			slug: "code-byline",
+			userId: user.id,
+			locale: "en-US",
+		});
+		// An explicit credit whose only translation is stamped with the code.
+		const credited = await bylines.create({
+			displayName: "Coded Credit",
+			slug: "coded-credit",
+			locale: "en-US",
+			customFields: { twitter: "@coded" },
+		});
+		// Posts stamped with the code, as older versions wrote them.
+		const explicit = await createPost("aliased-explicit", { locale: "en-US" });
+		await bylines.setContentBylines("post", explicit!.id, [{ bylineId: credited.id }]);
+		const posts = [
+			await content.findById("post", explicit!.id),
+			await createPost("aliased-fallback", { locale: "en-US", authorId: user.id }),
+		];
+		const expected = await queryPath(posts);
+		expect(expected.get(posts[0]!.id)?.[0]?.byline.displayName).toBe("Coded Credit");
+		expect(expected.get(posts[1]!.id)?.[0]?.byline.displayName).toBe("Path Byline");
+
+		const spies = spyOnQueryPath();
+		const { entries } = await runWithContext({ editMode: false, db }, () =>
+			getEmDashCollection("post", { locale: "en" }),
+		);
+
+		expect(entries).toHaveLength(2);
+		for (const entry of entries) {
+			// eslint-disable-next-line typescript/no-explicit-any -- hydrated data is dynamically shaped
+			const data = entry.data as any;
+			expect(data.bylines).toEqual(expected.get(data.id));
+		}
+		expect(await entryBylines("aliased-fallback")).toEqual(expected.get(posts[1]!.id));
+		for (const spy of spies) expect(spy).not.toHaveBeenCalled();
+	});
+
 	it("skips custom-field hydration for a collection read with no bylines", async () => {
 		await registerCustomFields();
 		// A byline exists, so the fold's "no bylines anywhere" shortcut is off.
