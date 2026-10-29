@@ -106,6 +106,15 @@ describe("runtime migration policy execution", () => {
 		expect(rows).toHaveLength(MIGRATION_NAMES.length);
 	});
 
+	it("keeps the content row limit off the current-schema fast path", async () => {
+		await runMigrations(db);
+		const counter = new QueryCountingPlugin();
+
+		await enforceRuntimeMigrationPolicy(db.withPlugin(counter), "auto", { contentRowLimit: 0 });
+
+		expect(counter.count).toBe(1);
+	});
+
 	it("checks directionally in one query and tolerates unknown applied names", async () => {
 		await runMigrations(db);
 		await db

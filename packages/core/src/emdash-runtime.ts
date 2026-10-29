@@ -63,6 +63,7 @@ import {
 	MIGRATION_RACE_WAIT_MS,
 	MigrationFailedError,
 	MigrationLockHeldError,
+	MigrationRowLimitError,
 } from "./database/migrations/runner.js";
 import { AuditRepository } from "./database/repositories/audit.js";
 import { CommentRepository } from "./database/repositories/comment.js";
@@ -634,7 +635,7 @@ interface DbHolder {
 	 * through the migration advisory lock (#1744). Entries expire after
 	 * DB_INIT_FAILURE_BACKOFF_MS; a successful init clears them.
 	 */
-	failures: Map<string, { at: number; message: string }>;
+	failures: Map<string, { at: number; message: string; cause?: unknown }>;
 }
 const globalSymbolStore = globalThis as Record<symbol, unknown>;
 function getDbHolder(): DbHolder {
@@ -661,6 +662,24 @@ function getDbHolder(): DbHolder {
  * most once per backoff window per isolate instead of on every request.
  */
 const DB_INIT_FAILURE_BACKOFF_MS = 30_000;
+
+/**
+ * The most content rows auto mode migrates inside a deployed Worker request.
+ * Datetime normalization (079) issues about one statement per row it changes,
+ * a paid Worker invocation stops at 10,000 subrequests and 30 s of CPU by
+ * default, and the migrations around it need some of that budget too.
+ */
+const WORKER_AUTO_MIGRATION_CONTENT_ROW_LIMIT = 5_000;
+
+/** Local development enforces no Worker limits, and Node has none. */
+function autoMigrationContentRowLimit(): number | undefined {
+	if (import.meta.env.DEV) return undefined;
+	const onWorkers =
+		typeof navigator !== "undefined" &&
+		typeof navigator.userAgent === "string" &&
+		navigator.userAgent.includes("Cloudflare-Workers");
+	return onWorkers ? WORKER_AUTO_MIGRATION_CONTENT_ROW_LIMIT : undefined;
+}
 
 /**
  * Auto-seed runs at most once per isolate per database. Its lock + "done" set
@@ -1080,10 +1099,20 @@ export class EmDashRuntime {
 	async setPluginStatus(pluginId: string, status: "active" | "inactive"): Promise<void> {
 		this.pluginStates.set(pluginId, status);
 		if (status === "active") {
-			this.setSandboxedPluginActive(pluginId, true);
-			this.enabledPlugins.add(pluginId);
-			await this.rebuildHookPipeline();
-			await this._hooks.runPluginActivate(pluginId);
+			try {
+				this.setSandboxedPluginActive(pluginId, true);
+				this.enabledPlugins.add(pluginId);
+				await this.rebuildHookPipeline();
+				const results = await this._hooks.runPluginActivate(pluginId);
+				const failure = results.find((result) => !result.success);
+				if (failure) throw failure.error ?? new Error("Plugin activation failed");
+			} catch (error) {
+				this.pluginStates.set(pluginId, "inactive");
+				this.setSandboxedPluginActive(pluginId, false);
+				this.enabledPlugins.delete(pluginId);
+				await this.rebuildHookPipeline();
+				throw error;
+			}
 		} else {
 			try {
 				// Deactivate hooks retain access until their cleanup has finished.
@@ -2473,6 +2502,7 @@ export class EmDashRuntime {
 			if (Date.now() - failure.at < DB_INIT_FAILURE_BACKOFF_MS) {
 				throw new Error(
 					`Database initialization is backing off after a recent migration failure: ${failure.message}`,
+					{ cause: failure.cause },
 				);
 			}
 			// Expired — drop it so the map only ever holds active backoffs.
@@ -2494,19 +2524,25 @@ export class EmDashRuntime {
 
 				try {
 					await enforceRuntimeMigrationPolicy(db, deps.migrationMode ?? "auto", {
+						contentRowLimit: autoMigrationContentRowLimit(),
 						appliedCount: options?.appliedMigrationCount,
 					});
 				} catch (error) {
-					// Only a failed migration run, or a lock its holder left behind,
-					// backs off. Waiting behind a slow concurrent migrator, pending
-					// migrations in check mode, and errors from the applied-migration
-					// check on an up-to-date database (a lost connection, an
-					// unavailable replica) stay retryable, so the next request tries
-					// again.
-					if (error instanceof MigrationFailedError || error instanceof MigrationLockHeldError) {
+					// Only a failed migration run, a lock its holder left behind, or
+					// content migrations too large for a request back off. Waiting
+					// behind a slow concurrent migrator, pending migrations in check
+					// mode, and errors from the applied-migration check on an
+					// up-to-date database (a lost connection, an unavailable replica)
+					// stay retryable, so the next request tries again.
+					if (
+						error instanceof MigrationFailedError ||
+						error instanceof MigrationLockHeldError ||
+						error instanceof MigrationRowLimitError
+					) {
 						holder.failures.set(cacheKey, {
 							at: Date.now(),
-							message: error instanceof Error ? error.message : String(error),
+							message: error.message,
+							cause: error,
 						});
 					}
 					// Every attempt builds a fresh dialect/pool; close it or each
@@ -6064,6 +6100,8 @@ export class EmDashRuntime {
 						: await normalizeMediaValue(value, getProvider);
 				if (normalized) {
 					result[field.slug] = normalized;
+				} else if (isBlankString(value)) {
+					result[field.slug] = null;
 				}
 			} catch {
 				// Don't fail the save if normalization fails for a single field
@@ -6091,6 +6129,8 @@ export class EmDashRuntime {
 							const normalized = await normalizeImageValue(subValue, getProvider);
 							if (normalized) {
 								normalizedItem[slug] = normalized;
+							} else if (isBlankString(subValue)) {
+								normalizedItem[slug] = null;
 							}
 						} catch {
 							// Don't fail the save if normalization fails for a single sub-field
@@ -6119,12 +6159,16 @@ export class EmDashRuntime {
 							const nestedValue = normalizedBlock[nestedField.slug];
 							if (nestedValue == null) continue;
 							try {
-								if (nestedField.type === "image") {
-									const normalized = await normalizeImageValue(nestedValue, getProvider);
-									if (normalized) normalizedBlock[nestedField.slug] = normalized;
-								} else if (nestedField.type === "file") {
-									const normalized = await normalizeMediaValue(nestedValue, getProvider);
-									if (normalized) normalizedBlock[nestedField.slug] = normalized;
+								if (nestedField.type === "image" || nestedField.type === "file") {
+									const normalized =
+										nestedField.type === "image"
+											? await normalizeImageValue(nestedValue, getProvider)
+											: await normalizeMediaValue(nestedValue, getProvider);
+									if (normalized) {
+										normalizedBlock[nestedField.slug] = normalized;
+									} else if (isBlankString(nestedValue)) {
+										normalizedBlock[nestedField.slug] = null;
+									}
 								} else if (nestedField.type === "repeater" && Array.isArray(nestedValue)) {
 									const imageSlugs = (nestedField.validation?.subFields ?? [])
 										.filter((subField) => subField.type === "image")
@@ -6139,7 +6183,11 @@ export class EmDashRuntime {
 														normalizedItem[slug],
 														getProvider,
 													);
-													if (normalized) normalizedItem[slug] = normalized;
+													if (normalized) {
+														normalizedItem[slug] = normalized;
+													} else if (isBlankString(normalizedItem[slug])) {
+														normalizedItem[slug] = null;
+													}
 												} catch {
 													continue;
 												}
@@ -6529,6 +6577,10 @@ export class EmDashRuntime {
 		const status = this.pluginStates.get(pluginId);
 		return status === undefined || status === "active";
 	}
+}
+
+function isBlankString(value: unknown): boolean {
+	return typeof value === "string" && value.trim() === "";
 }
 
 /**

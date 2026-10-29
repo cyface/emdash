@@ -18,11 +18,11 @@ export const MEDIA_SEARCH_MAX_LENGTH = 200;
 export interface MediaUploadOptions {
 	signal?: AbortSignal;
 	folderId?: string | null;
+	deduplicate?: boolean;
 }
 
 export interface UploadMediaOptions extends MediaUploadOptions {
 	fieldId?: string;
-	deduplicate?: boolean;
 	ensureUniqueFilename?: boolean;
 	folderId?: string | null;
 }
@@ -683,6 +683,7 @@ export interface MediaProviderItem {
 	/** LQIP dominant-color placeholder, as a CSS color (images only) */
 	dominantColor?: string;
 	alt?: string;
+	caption?: string;
 	previewUrl?: string;
 	meta?: Record<string, unknown>;
 }
