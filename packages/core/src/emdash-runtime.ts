@@ -663,6 +663,16 @@ function getDbHolder(): DbHolder {
  */
 const DB_INIT_FAILURE_BACKOFF_MS = 30_000;
 
+/** The failure a db init is still backing off from, if any. */
+function activeInitFailure(holder: DbHolder, cacheKey: string) {
+	const failure = holder.failures.get(cacheKey);
+	if (!failure) return undefined;
+	if (Date.now() - failure.at < DB_INIT_FAILURE_BACKOFF_MS) return failure;
+	// Expired — drop it so the map only ever holds active backoffs.
+	holder.failures.delete(cacheKey);
+	return undefined;
+}
+
 /**
  * The most content rows auto mode migrates inside a deployed Worker request.
  * Datetime normalization (079) issues about one statement per row it changes,
@@ -1826,7 +1836,14 @@ export class EmDashRuntime {
 		let migrationsCurrent = false;
 		let foldedColdStartReads: ReturnType<typeof runColdStartReads> | undefined;
 		let appliedMigrationCount: Promise<number | null | undefined> | undefined;
-		if (coalescingDb && (deps.migrationMode ?? "auto") === "auto") {
+		// Only fold when getDatabase will actually initialize: a cached db needs
+		// no count, and during a backoff getDatabase throws without touching the
+		// database, so neither should the reads.
+		if (
+			coalescingDb &&
+			(deps.migrationMode ?? "auto") === "auto" &&
+			EmDashRuntime.databaseNeedsInit(deps)
+		) {
 			// A read error leaves the policy to read the count itself.
 			appliedMigrationCount = getAppliedMigrationCount(coalescingDb).catch(() => undefined);
 			foldedColdStartReads = runColdStartReads(coalescingDb);
@@ -2450,6 +2467,19 @@ export class EmDashRuntime {
 	}
 
 	/**
+	 * Whether getDatabase would initialize the configured database: it isn't
+	 * cached yet and isn't backing off after a failed init.
+	 */
+	private static databaseNeedsInit(deps: RuntimeDependencies): boolean {
+		const dbConfig = deps.config.database;
+		if (!dbConfig) return false;
+		const holder = getDbHolder();
+		return (
+			!holder.cache.has(dbConfig.entrypoint) && !activeInitFailure(holder, dbConfig.entrypoint)
+		);
+	}
+
+	/**
 	 * Get or create database instance
 	 *
 	 * `appliedMigrationCount` is a count the caller already read from this
@@ -2497,16 +2527,12 @@ export class EmDashRuntime {
 		const holder = getDbHolder();
 
 		const throwIfBackingOff = () => {
-			const failure = holder.failures.get(cacheKey);
+			const failure = activeInitFailure(holder, cacheKey);
 			if (!failure) return;
-			if (Date.now() - failure.at < DB_INIT_FAILURE_BACKOFF_MS) {
-				throw new Error(
-					`Database initialization is backing off after a recent migration failure: ${failure.message}`,
-					{ cause: failure.cause },
-				);
-			}
-			// Expired — drop it so the map only ever holds active backoffs.
-			holder.failures.delete(cacheKey);
+			throw new Error(
+				`Database initialization is backing off after a recent migration failure: ${failure.message}`,
+				{ cause: failure.cause },
+			);
 		};
 		throwIfBackingOff();
 

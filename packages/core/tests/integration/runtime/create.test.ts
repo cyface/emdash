@@ -809,6 +809,63 @@ describe("EmDashRuntime.create — cold boot", () => {
 				await runtime.stopCron();
 			}
 		});
+
+		it("touches neither connection while backing off after a failed migration", async () => {
+			// Fully migrated, then 001_initial's bookkeeping row is removed so the
+			// migrator re-runs it against existing tables and fails.
+			const sqlite = sharedDatabase();
+			const setupDb = new Kysely<EmDashDatabase>({
+				dialect: new SqliteDialect({ database: sqlite }),
+			});
+			await runMigrations(setupDb);
+			await sql`DELETE FROM _emdash_migrations WHERE name = '001_initial'`.execute(setupDb);
+
+			const singletonSql: string[] = [];
+			const coalescingSql: string[] = [];
+			const deps: RuntimeDependencies = {
+				...createDeps(),
+				createDialect: () => new SqliteDialect({ database: recordingHandle(sqlite, singletonSql) }),
+				createCoalescingDialect: () =>
+					new SqliteDialect({ database: recordingHandle(sqlite, coalescingSql) }),
+			};
+
+			await expect(EmDashRuntime.create(deps)).rejects.toThrow(/Migration failed/i);
+			singletonSql.length = 0;
+			coalescingSql.length = 0;
+
+			await expect(EmDashRuntime.create(deps)).rejects.toThrow(/backing off/i);
+			expect(singletonSql).toEqual([]);
+			expect(coalescingSql).toEqual([]);
+		});
+
+		it("skips the count when the database is already cached", async () => {
+			const sqlite = sharedDatabase();
+			await runMigrations(
+				new Kysely<EmDashDatabase>({ dialect: new SqliteDialect({ database: sqlite }) }),
+			);
+			const coalescingSql: string[] = [];
+			const deps: RuntimeDependencies = {
+				...createDeps(),
+				createDialect: () => new SqliteDialect({ database: sqlite }),
+				createCoalescingDialect: () =>
+					new SqliteDialect({ database: recordingHandle(sqlite, coalescingSql) }),
+			};
+
+			const first = await EmDashRuntime.create(deps);
+			await first.stopCron();
+			coalescingSql.length = 0;
+
+			const timings: Array<{ name: string; dur: number; desc?: string }> = [];
+			const second = await EmDashRuntime.create(deps, timings);
+			try {
+				expect(coalescingSql.filter((s) => MIGRATION_COUNT_SQL.test(s))).toHaveLength(0);
+				// The cold-start reads still ran once, on the coalescing connection.
+				expect(timings.filter((t) => t.name === "rt.plugins")).toHaveLength(1);
+				expect(coalescingSql.length).toBeGreaterThan(0);
+			} finally {
+				await second.stopCron();
+			}
+		});
 	});
 
 	// A failed migration must not be retried on every create() call: on
